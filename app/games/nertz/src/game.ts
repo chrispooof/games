@@ -4,6 +4,7 @@ import deckUrl from "~/assets/deck.glb?url"
 import { Table } from "./world/terrain"
 import { PlayerDeck } from "./world/player-deck"
 import { DragControls } from "./controls/player"
+import { IntroAnimation } from "./scenes/intro"
 import {
   AMBIENT_LIGHT_COLOR,
   AMBIENT_LIGHT_INTENSITY,
@@ -40,6 +41,7 @@ export class NertzGame {
   private deckGlbScene: THREE.Object3D | null = null
   private table: Table | null = null
   private dragControls!: DragControls
+  private intro: IntroAnimation | null = null
   private lastTime = performance.now()
   private totalTime = 0
 
@@ -126,11 +128,18 @@ export class NertzGame {
    */
   addPlayer() {
     if (!this.deckGlbScene) return
+    const isFirstPlayer = this.playerDecks.length === 0
     const deck = new PlayerDeck(this.playerDecks.length)
     deck.buildFromGLB(this.deckGlbScene, this.scene)
     this.playerDecks.push(deck)
     this.refreshTable()
-    this.dragControls.setCards(this.playerDecks.flatMap((d) => d.cards))
+
+    if (isFirstPlayer) {
+      // Intro animation runs first; drag is enabled once it completes
+      this.intro = new IntroAnimation(deck.cards, this.camera)
+    } else {
+      this.dragControls.setCards(this.playerDecks.flatMap((d) => d.cards))
+    }
   }
 
   /** Keeps the renderer and camera aspect ratio in sync with the container size */
@@ -147,6 +156,15 @@ export class NertzGame {
     const deltaTime = Math.min((now - this.lastTime) / 1000, MAX_DELTA_TIME)
     this.lastTime = now
     this.totalTime += deltaTime
+
+    if (this.intro && !this.intro.isComplete) {
+      this.intro.update(deltaTime)
+      // Enable drag as soon as the intro finishes
+      if (this.intro.isComplete) {
+        this.dragControls.setCards(this.playerDecks.flatMap((d) => d.cards))
+      }
+    }
+
     this.renderer.render(this.scene, this.camera)
   }
 
