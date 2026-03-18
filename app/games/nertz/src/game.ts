@@ -4,6 +4,7 @@ import deckUrl from "~/assets/deck.glb?url"
 import { Table } from "./world/terrain"
 import { PlayerDeck } from "./world/player-deck"
 import { DragControls } from "./controls/player"
+import { ShuffleAnimation } from "./scenes/shuffle"
 import { IntroAnimation } from "./scenes/intro"
 import {
   AMBIENT_LIGHT_COLOR,
@@ -41,6 +42,7 @@ export class NertzGame {
   private deckGlbScene: THREE.Object3D | null = null
   private table: Table | null = null
   private dragControls!: DragControls
+  private shuffle: ShuffleAnimation | null = null
   private intro: IntroAnimation | null = null
   private lastTime = performance.now()
   private totalTime = 0
@@ -135,8 +137,8 @@ export class NertzGame {
     this.refreshTable()
 
     if (isFirstPlayer) {
-      // Intro animation runs first; drag is enabled once it completes
-      this.intro = new IntroAnimation(deck.cards, this.camera)
+      // Shuffle runs first, then deal, then drag is enabled
+      this.shuffle = new ShuffleAnimation(deck.cards)
     } else {
       this.dragControls.setCards(this.playerDecks.flatMap((d) => d.cards))
     }
@@ -157,9 +159,15 @@ export class NertzGame {
     this.lastTime = now
     this.totalTime += deltaTime
 
-    if (this.intro && !this.intro.isComplete) {
+    if (this.shuffle && !this.shuffle.isComplete) {
+      this.shuffle.update(deltaTime)
+      // Kick off the deal animation once shuffling is done
+      if (this.shuffle.isComplete) {
+        this.intro = new IntroAnimation(this.shuffle.shuffledCards, this.camera)
+      }
+    } else if (this.intro && !this.intro.isComplete) {
       this.intro.update(deltaTime)
-      // Enable drag as soon as the intro finishes
+      // Enable drag once the deal finishes
       if (this.intro.isComplete) {
         this.dragControls.setCards(this.playerDecks.flatMap((d) => d.cards))
       }
