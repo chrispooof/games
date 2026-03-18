@@ -14,5 +14,12 @@ if [ -z "$CHANGED" ]; then
   exit 0
 fi
 
-CHANGED_ARGS=$(echo "$CHANGED" | tr '\n' ' ')
-npx vitest related --passWithNoTests $CHANGED_ARGS
+# Filter to ui/ files only and strip the ui/ prefix for vitest
+UI_CHANGED=$(echo "$CHANGED" | grep '^ui/' | sed 's|^ui/||' | tr '\n' ' ')
+
+if [ -z "$UI_CHANGED" ]; then
+  echo "No ui files changed, skipping tests"
+  exit 0
+fi
+
+cd ui && npx vitest related --passWithNoTests $UI_CHANGED

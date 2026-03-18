@@ -2,7 +2,12 @@
 .env
 /node_modules/
 
-# React Router
-/.react-router/
-/build/
+# React Router (ui project)
+/ui/.react-router/
+/ui/build/
+
+# Nx
+.nx/cache
+.nx/workspace-data
+
 .claude
