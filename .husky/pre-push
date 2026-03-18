@@ -1,0 +1,18 @@
+#!/bin/sh
+# Get changed files between remote tracking branch and HEAD
+REMOTE=$(git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null)
+
+if [ -n "$REMOTE" ]; then
+  REMOTE_SHA=$(git rev-parse "$REMOTE" 2>/dev/null)
+  CHANGED=$(git diff --name-only "$REMOTE_SHA" HEAD 2>/dev/null)
+else
+  CHANGED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null)
+fi
+
+if [ -z "$CHANGED" ]; then
+  echo "No changed files, skipping tests"
+  exit 0
+fi
+
+CHANGED_ARGS=$(echo "$CHANGED" | tr '\n' ' ')
+npx vitest related --passWithNoTests $CHANGED_ARGS
