@@ -1,17 +1,14 @@
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js"
 import * as THREE from "three"
-import { DECK_CARD_NAME_CONFIG } from "../../shared/config/deck"
-import { Card } from "../../shared/types/deck"
-import { parseCardConfig } from "../../shared/utils/deck"
 import deckUrl from "~/assets/deck.glb?url"
 import { Table } from "./world/terrain"
+import { PlayerDeck } from "./world/player-deck"
 import { DragControls } from "./controls/player"
 import {
   AMBIENT_LIGHT_COLOR,
   AMBIENT_LIGHT_INTENSITY,
   CAMERA_FOV,
   CAMERA_HEIGHT,
-  CARD_Y_OFFSET,
   COL_GAP,
   COLS,
   DIR_LIGHT_COLOR,
@@ -29,6 +26,9 @@ import {
 /**
  * Main game class for Nertz. Owns the Three.js renderer, scene, and game loop.
  * Mount it by passing a container element; tear it down by calling `destroy()`.
+ *
+ * Call `addPlayer()` after construction to add more players — each gets their own
+ * cloned deck with a distinct card-back color.
  */
 export class NertzGame {
   private container: HTMLElement
@@ -36,14 +36,14 @@ export class NertzGame {
   private scene: THREE.Scene
   private camera: THREE.PerspectiveCamera
   private loader: GLTFLoader
-  private cards: Card[] = []
+  private playerDecks: PlayerDeck[] = []
+  private deckGlbScene: THREE.Object3D | null = null
+  private table: Table | null = null
   private dragControls!: DragControls
   private lastTime = performance.now()
   private totalTime = 0
 
-  /**
-   * @param container - The DOM element that will host the WebGL canvas
-   */
+  /** @param container - The DOM element that will host the WebGL canvas */
   constructor(container: HTMLElement) {
     this.container = container
     this.renderer = new THREE.WebGLRenderer({ antialias: true })
@@ -57,25 +57,23 @@ export class NertzGame {
     )
     this.loader = new GLTFLoader()
     this.addLights()
-    this.addTable()
-    this.loadCards()
-    this.dragControls = new DragControls(this.camera, this.renderer.domElement, this.cards)
+    this.refreshTable()
+    this.dragControls = new DragControls(this.camera, this.renderer.domElement, [])
+    this.loadDeck()
     this.init()
   }
 
   /** Mounts the canvas, attaches event listeners, and starts the render loop */
   private init() {
     this.container.appendChild(this.renderer.domElement)
-    // Event listeners
     window.addEventListener("resize", this.onResize)
     this.dragControls.attach()
 
-    // Camera setup - Top-down camera view: up vector points toward -Z so "up" on screen is north
+    // Top-down camera: up vector points toward -Z so "up" on screen is north
     this.camera.position.set(0, CAMERA_HEIGHT, 0)
     this.camera.up.set(0, 0, -1)
     this.camera.lookAt(0, 0, 0)
 
-    // Renderer setup
     this.renderer.setSize(this.container.clientWidth, this.container.clientHeight)
     this.renderer.setPixelRatio(window.devicePixelRatio)
     this.renderer.shadowMap.enabled = true
@@ -84,7 +82,6 @@ export class NertzGame {
 
   /** Adds a directional key light and ambient fill light to the scene */
   private addLights() {
-    // Overhead key light casting soft shadows
     const dirLight = new THREE.DirectionalLight(DIR_LIGHT_COLOR, DIR_LIGHT_INTENSITY)
     dirLight.position.set(0, DIR_LIGHT_HEIGHT, 0)
     dirLight.castShadow = true
@@ -96,48 +93,44 @@ export class NertzGame {
     dirLight.shadow.camera.top = SHADOW_CAM_EXTENT
     dirLight.shadow.camera.bottom = -SHADOW_CAM_EXTENT
     this.scene.add(dirLight)
-
     this.scene.add(new THREE.AmbientLight(AMBIENT_LIGHT_COLOR, AMBIENT_LIGHT_INTENSITY))
   }
 
-  /** Sizes the table to fit the full card grid and adds it to the scene */
-  private addTable() {
+  /**
+   * Rebuilds the table felt to fit all current player decks.
+   * Called once on construction and again whenever a player is added.
+   */
+  private refreshTable() {
+    if (this.table) this.scene.remove(this.table)
+    const playerCount = Math.max(1, this.playerDecks.length)
+    const totalRows = Math.ceil(52 / COLS)
     const tableW = COLS * COL_GAP + 0.2
-    const tableD = 4 * ROW_GAP + 0.2
-    this.scene.add(new Table(tableW, tableD))
+    // Each deck occupies totalRows * ROW_GAP depth; decks are separated by 1.5 units
+    const tableD = playerCount * totalRows * ROW_GAP + (playerCount - 1) * 1.5 + 0.2
+    this.table = new Table(tableW, tableD)
+    this.scene.add(this.table)
   }
 
-  /** Loads the deck GLB and lays all 52 cards out in a grid on the table */
-  private async loadCards() {
+  /** Loads the deck GLB once and adds the first player when ready */
+  private loadDeck() {
     this.loader.load(deckUrl, (deckGlb) => {
-      const deck = deckGlb.scene
-      const totalCols = COLS
-      const totalRows = Math.ceil(DECK_CARD_NAME_CONFIG.length / totalCols)
-      const offsetX = ((totalCols - 1) * COL_GAP) / 2
-      const offsetZ = ((totalRows - 1) * ROW_GAP) / 2
-
-      DECK_CARD_NAME_CONFIG.forEach((name, index) => {
-        const object = deck.getObjectByName(name)
-        if (!object) {
-          console.warn(`Card object not found in GLB: ${name}`)
-          return
-        }
-
-        const { suit, rank, value } = parseCardConfig(name)
-        const card = new Card(name, suit, rank, value, true, object, () =>
-          console.log("Card clicked:", name)
-        )
-        this.cards.push(card)
-
-        const col = index % totalCols
-        const row = Math.floor(index / totalCols)
-
-        // Cards are already flat in the GLB (Y is thickness) — no rotation needed
-        object.position.set(col * COL_GAP - offsetX, CARD_Y_OFFSET, row * ROW_GAP - offsetZ)
-        object.castShadow = true
-        this.scene.add(object)
-      })
+      this.deckGlbScene = deckGlb.scene
+      this.addPlayer()
     })
+  }
+
+  /**
+   * Adds a new player: clones the deck GLB, assigns a unique card-back color,
+   * positions the grid below existing players, and updates drag controls.
+   * Safe to call before the GLB has loaded — the first call is deferred via loadDeck().
+   */
+  addPlayer() {
+    if (!this.deckGlbScene) return
+    const deck = new PlayerDeck(this.playerDecks.length)
+    deck.buildFromGLB(this.deckGlbScene, this.scene)
+    this.playerDecks.push(deck)
+    this.refreshTable()
+    this.dragControls.setCards(this.playerDecks.flatMap((d) => d.cards))
   }
 
   /** Keeps the renderer and camera aspect ratio in sync with the container size */
@@ -154,7 +147,6 @@ export class NertzGame {
     const deltaTime = Math.min((now - this.lastTime) / 1000, MAX_DELTA_TIME)
     this.lastTime = now
     this.totalTime += deltaTime
-
     this.renderer.render(this.scene, this.camera)
   }
 

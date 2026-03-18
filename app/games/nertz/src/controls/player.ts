@@ -46,6 +46,11 @@ export class DragControls {
     this.domElement.addEventListener("mouseup", this.onMouseUp)
   }
 
+  /** Replaces the card list used for raycasting and dragging */
+  setCards(cards: Card[]): void {
+    this.cards = cards
+  }
+
   /** Removes all mouse listeners from the canvas */
   detach() {
     this.domElement.removeEventListener("mousedown", this.onMouseDown)
