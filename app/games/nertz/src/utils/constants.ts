@@ -6,6 +6,9 @@ export const ROW_GAP = 1.05
 /** Y position of cards laid flat on the table surface */
 export const CARD_Y_OFFSET = 0.01
 
+/** Y height of a card while being dragged (lifted slightly above the table) */
+export const CARD_DRAG_Y = 0.15
+
 /** Maximum delta time per frame (seconds) to prevent spiral-of-death on tab resume */
 export const MAX_DELTA_TIME = 0.05
 

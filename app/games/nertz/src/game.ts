@@ -5,6 +5,7 @@ import { Card } from "../../shared/types/deck"
 import { parseCardConfig } from "../../shared/utils/deck"
 import deckUrl from "~/assets/deck.glb?url"
 import { Table } from "./world/terrain"
+import { DragControls } from "./controls/player"
 import {
   AMBIENT_LIGHT_COLOR,
   AMBIENT_LIGHT_INTENSITY,
@@ -36,7 +37,7 @@ export class NertzGame {
   private camera: THREE.PerspectiveCamera
   private loader: GLTFLoader
   private cards: Card[] = []
-  private raycaster = new THREE.Raycaster()
+  private dragControls!: DragControls
   private lastTime = performance.now()
   private totalTime = 0
 
@@ -58,6 +59,7 @@ export class NertzGame {
     this.addLights()
     this.addTable()
     this.loadCards()
+    this.dragControls = new DragControls(this.camera, this.renderer.domElement, this.cards)
     this.init()
   }
 
@@ -66,7 +68,7 @@ export class NertzGame {
     this.container.appendChild(this.renderer.domElement)
     // Event listeners
     window.addEventListener("resize", this.onResize)
-    this.renderer.domElement.addEventListener("click", this.onClick)
+    this.dragControls.attach()
 
     // Camera setup - Top-down camera view: up vector points toward -Z so "up" on screen is north
     this.camera.position.set(0, CAMERA_HEIGHT, 0)
@@ -138,35 +140,6 @@ export class NertzGame {
     })
   }
 
-  /**
-   * Raycasts from the click position into the scene and fires the matching card's onClick.
-   * Walks up the object hierarchy so clicking a child mesh still resolves the parent card.
-   */
-  private onClick = (event: MouseEvent) => {
-    const rect = this.renderer.domElement.getBoundingClientRect()
-    const pointer = new THREE.Vector2(
-      ((event.clientX - rect.left) / rect.width) * 2 - 1,
-      -((event.clientY - rect.top) / rect.height) * 2 + 1
-    )
-
-    this.raycaster.setFromCamera(pointer, this.camera)
-
-    const cardObjects = this.cards.flatMap((c) => (c.object ? [c.object] : []))
-    const [hit] = this.raycaster.intersectObjects(cardObjects, true)
-    if (!hit) return
-
-    const card = this.cards.find((c) => {
-      if (!c.object) return false
-      let node: THREE.Object3D | null = hit.object
-      while (node) {
-        if (node === c.object) return true
-        node = node.parent
-      }
-      return false
-    })
-    card?.onClick?.()
-  }
-
   /** Keeps the renderer and camera aspect ratio in sync with the container size */
   private onResize = () => {
     const { clientWidth: width, clientHeight: height } = this.container
@@ -189,7 +162,7 @@ export class NertzGame {
   destroy() {
     this.renderer.setAnimationLoop(null)
     window.removeEventListener("resize", this.onResize)
-    this.renderer.domElement.removeEventListener("click", this.onClick)
+    this.dragControls.detach()
     this.renderer.dispose()
     this.container.removeChild(this.renderer.domElement)
   }
