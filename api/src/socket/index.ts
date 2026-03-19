@@ -2,6 +2,7 @@ import type { Server } from "socket.io"
 import {
   addPlayer,
   removePlayer,
+  getGame,
   getGameState,
   getPlayers,
   updatePlayerSocket,
@@ -56,10 +57,20 @@ export const registerSocketHandlers = (io: Server): void => {
           console.log(`[socket] ${playerId} joined room ${roomCode}`)
         }
 
-        // Send the joining player the current room state (all players + game state)
-        const players = await getPlayers(roomCode)
-        const gameState = await getGameState(roomCode)
-        socket.emit("room-state", { players, gameState: gameState ?? null })
+        // Send the joining player the current room state — players sorted by join order
+        const [players, game, gameState] = await Promise.all([
+          getPlayers(roomCode),
+          getGame(roomCode),
+          getGameState(roomCode),
+        ])
+        const sortedPlayers = [...players].sort(
+          (a, b) => new Date(a.joinedAt).getTime() - new Date(b.joinedAt).getTime(),
+        )
+        socket.emit("room-state", {
+          players: sortedPlayers,
+          maxPlayers: game?.playerCount ?? 1,
+          gameState: gameState?.state ?? null,
+        })
       },
     )
 
@@ -106,6 +117,31 @@ export const registerSocketHandlers = (io: Server): void => {
 
         // Broadcast to everyone else in the room
         socket.to(roomCode).emit("game-action", action)
+      },
+    )
+
+    /**
+     * Client bulk-saves all card positions (emitted once after the intro animation completes).
+     * Persists to game state and broadcasts to other players so they see the correct layout.
+     *
+     * Payload: Record<cardId, { x, z }>
+     */
+    socket.on(
+      "set-state",
+      async (positions: Record<string, { x: number; z: number }>) => {
+        const entry = socketToPlayer.get(socket.id)
+        if (!entry) return
+        const { roomCode } = entry
+
+        const current = await getGameState(roomCode)
+        const state = current?.state ?? {}
+        const existing =
+          (state.cardPositions as Record<string, { x: number; z: number }>) ?? {}
+        const merged = { ...existing, ...positions }
+        await updateGameState(roomCode, "nertz", { ...state, cardPositions: merged })
+
+        // Let other players in the room update their view
+        socket.to(roomCode).emit("game-state-update", { cardPositions: merged })
       },
     )
 

@@ -3,7 +3,7 @@ import * as THREE from "three"
 import { socket } from "~/lib/socket"
 import deckUrl from "~/assets/deck.glb?url"
 import { Table } from "./world/terrain"
-import { PlayerDeck } from "./world/player-deck"
+import { PlayerDeck, type Seat } from "./world/player-deck"
 import { DragControls } from "./controls/player"
 import { ShuffleAnimation } from "./scenes/shuffle"
 import { IntroAnimation } from "./scenes/intro"
@@ -12,14 +12,13 @@ import {
   AMBIENT_LIGHT_INTENSITY,
   CAMERA_FOV,
   CAMERA_HEIGHT,
-  COL_GAP,
-  COLS,
   DIR_LIGHT_COLOR,
   DIR_LIGHT_HEIGHT,
   DIR_LIGHT_INTENSITY,
   MAX_DELTA_TIME,
-  ROW_GAP,
+  PILE_OFFSET,
   SCENE_BACKGROUND_COLOR,
+  SEAT_RADIUS,
   SHADOW_CAM_EXTENT,
   SHADOW_CAM_FAR,
   SHADOW_CAM_NEAR,
@@ -30,8 +29,9 @@ import {
  * Main game class for Nertz. Owns the Three.js renderer, scene, and game loop.
  * Mount it by passing a container element; tear it down by calling `destroy()`.
  *
- * Call `addPlayer()` after construction to add more players — each gets their own
- * cloned deck with a distinct card-back color.
+ * Players sit around a circular table. All clients use the same world-space seat
+ * positions (determined by join order); each client rotates its camera so its own
+ * deck always appears at the bottom of the screen.
  */
 export class NertzGame {
   private container: HTMLElement
@@ -47,16 +47,38 @@ export class NertzGame {
   private intro: IntroAnimation | null = null
   private lastTime = performance.now()
   private totalTime = 0
-  /** Number of player decks to add once the GLB finishes loading */
-  private initialPlayerCount: number
+  /** Total seats around the table — used for consistent angle computation across all clients */
+  private maxPlayers: number
+  /** How many player decks to add once the GLB finishes loading */
+  private initialDeckCount: number
+  /** Which deck index belongs to the local player (runs the intro animation) */
+  private localPlayerIndex: number
+  /** World-space pile position for the local player's dealt cards */
+  private localPileX = 0
+  private localPileZ = 0
+  /** Saved card positions from the server — used to skip intro and restore state */
+  private initialCardPositions: Record<string, { x: number; z: number }> | null
 
   /**
    * @param container - The DOM element that will host the WebGL canvas
-   * @param initialPlayerCount - How many player decks to create on load (default 1)
+   * @param maxPlayers - Total seat count around the table; governs seat angle spacing
+   * @param initialDeckCount - How many player decks to create on load (default 1)
+   * @param localPlayerIndex - Deck index for the local player; that deck runs the intro (default 0)
+   * @param initialCardPositions - Saved positions from the server; when present, local player's
+   *   deck skips the intro animation and cards are placed at their last known positions
    */
-  constructor(container: HTMLElement, initialPlayerCount = 1) {
+  constructor(
+    container: HTMLElement,
+    maxPlayers = 1,
+    initialDeckCount = 1,
+    localPlayerIndex = 0,
+    initialCardPositions: Record<string, { x: number; z: number }> | null = null
+  ) {
     this.container = container
-    this.initialPlayerCount = initialPlayerCount
+    this.maxPlayers = maxPlayers
+    this.initialDeckCount = initialDeckCount
+    this.localPlayerIndex = localPlayerIndex
+    this.initialCardPositions = initialCardPositions
     this.renderer = new THREE.WebGLRenderer({ antialias: true })
     this.scene = new THREE.Scene()
     this.scene.background = new THREE.Color(SCENE_BACKGROUND_COLOR)
@@ -81,15 +103,31 @@ export class NertzGame {
     this.init()
   }
 
+  /**
+   * Computes the world-space seat transform for player at `index` in a game of `total` players.
+   * Seat 0 is at positive-Z (south); seats increment clockwise when viewed top-down.
+   * The grid is oriented so the player faces the table center (rotation.y = angle).
+   */
+  private computeSeat(index: number, total: number): Seat {
+    const angle = (2 * Math.PI * index) / total
+    return {
+      x: Math.sin(angle) * SEAT_RADIUS,
+      z: Math.cos(angle) * SEAT_RADIUS,
+      angle,
+    }
+  }
+
   /** Mounts the canvas, attaches event listeners, and starts the render loop */
   private init() {
     this.container.appendChild(this.renderer.domElement)
     window.addEventListener("resize", this.onResize)
     this.dragControls.attach()
 
-    // Top-down camera: up vector points toward -Z so "up" on screen is north
+    // Orient the camera so the local player's seat is always at the bottom of the screen.
+    // camera.up is set to the vector pointing AWAY from the local seat (toward top of screen).
+    const localSeat = this.computeSeat(this.localPlayerIndex, this.maxPlayers)
     this.camera.position.set(0, CAMERA_HEIGHT, 0)
-    this.camera.up.set(0, 0, -1)
+    this.camera.up.set(-Math.sin(localSeat.angle), 0, -Math.cos(localSeat.angle))
     this.camera.lookAt(0, 0, 0)
 
     this.renderer.setSize(this.container.clientWidth, this.container.clientHeight)
@@ -115,17 +153,14 @@ export class NertzGame {
   }
 
   /**
-   * Rebuilds the table felt to fit all current player decks.
-   * Called once on construction and again whenever a player is added.
+   * Rebuilds the circular table felt. The radius is fixed to cover all possible seat grids.
+   * Called once on construction; the size doesn't change when players join since seats
+   * are always within SEAT_RADIUS of center.
    */
   private refreshTable() {
     if (this.table) this.scene.remove(this.table)
-    const playerCount = Math.max(1, this.playerDecks.length)
-    const totalRows = Math.ceil(52 / COLS)
-    const tableW = COLS * COL_GAP + 0.2
-    // Each deck occupies totalRows * ROW_GAP depth; decks are separated by 1.5 units
-    const tableD = playerCount * totalRows * ROW_GAP + (playerCount - 1) * 1.5 + 0.2
-    this.table = new Table(tableW, tableD)
+    // Cover grid depth beyond the seat center; add generous padding
+    this.table = new Table(SEAT_RADIUS + 3)
     this.scene.add(this.table)
   }
 
@@ -133,30 +168,93 @@ export class NertzGame {
   private loadDeck() {
     this.loader.load(deckUrl, (deckGlb) => {
       this.deckGlbScene = deckGlb.scene
-      for (let i = 0; i < this.initialPlayerCount; i++) {
+      for (let i = 0; i < this.initialDeckCount; i++) {
         this.addPlayer()
       }
     })
   }
 
   /**
-   * Adds a new player: clones the deck GLB, assigns a unique card-back color,
-   * positions the grid below existing players, and updates drag controls.
-   * Safe to call before the GLB has loaded — the first call is deferred via loadDeck().
+   * Adds a new player deck at the next available seat around the table.
+   * - Local player's deck: runs shuffle → intro unless saved positions exist,
+   *   in which case cards are placed directly and drag is enabled immediately.
+   * - Remote player decks: positioned from saved state if available, otherwise
+   *   hidden until `applyState` is called when they complete their own intro.
    */
   addPlayer() {
     if (!this.deckGlbScene) return
-    const isFirstPlayer = this.playerDecks.length === 0
-    const deck = new PlayerDeck(this.playerDecks.length)
-    deck.buildFromGLB(this.deckGlbScene, this.scene)
-    this.playerDecks.push(deck)
-    this.refreshTable()
+    const deckIndex = this.playerDecks.length
+    const isLocalPlayer = deckIndex === this.localPlayerIndex
+    const seat = this.computeSeat(deckIndex, this.maxPlayers)
 
-    if (isFirstPlayer) {
-      // Shuffle runs first, then deal, then drag is enabled
-      this.shuffle = new ShuffleAnimation(deck.cards)
+    const deck = new PlayerDeck(deckIndex)
+    deck.buildFromGLB(this.deckGlbScene, this.scene, seat)
+    this.playerDecks.push(deck)
+
+    // Pile lands slightly closer to table center than the seat grid
+    const pileX = Math.sin(seat.angle) * (SEAT_RADIUS - PILE_OFFSET)
+    const pileZ = Math.cos(seat.angle) * (SEAT_RADIUS - PILE_OFFSET)
+
+    if (isLocalPlayer) {
+      this.localPileX = pileX
+      this.localPileZ = pileZ
+      const hasPositions = this.applyInitialPositions(deck)
+      if (hasPositions) {
+        // Resuming an existing game: skip the intro and re-enable drag immediately
+        this.dragControls.setCards(deck.cards)
+      } else {
+        // Fresh game: run the full shuffle → deal intro sequence
+        this.shuffle = new ShuffleAnimation(deck.cards, { x: seat.x, z: seat.z })
+      }
     } else {
-      this.dragControls.setCards(this.playerDecks.flatMap((d) => d.cards))
+      const hasPositions = this.applyInitialPositions(deck)
+      if (!hasPositions) {
+        // Other player hasn't finished their intro yet — hide their deck until
+        // game-state-update arrives with their initial pile layout
+        for (const card of deck.cards) {
+          card.object.visible = false
+        }
+      }
+    }
+  }
+
+  /**
+   * Applies saved `x`/`z` positions from `initialCardPositions` to a freshly-built deck.
+   * Cards with a saved position are made visible and flipped face-down (rotation.z = π).
+   * @returns true if at least one card had a saved position
+   */
+  private applyInitialPositions(deck: PlayerDeck): boolean {
+    if (!this.initialCardPositions) return false
+    let applied = false
+    for (const card of deck.cards) {
+      const pos = this.initialCardPositions[card.id]
+      if (pos) {
+        card.object.visible = true
+        card.object.position.x = pos.x
+        card.object.position.z = pos.z
+        card.object.rotation.z = Math.PI // face-down, matching post-intro state
+        applied = true
+      }
+    }
+    return applied
+  }
+
+  /**
+   * Applies a batch of card positions to all decks in the scene.
+   * Used for reconnect state restore and when other players broadcast their initial layout.
+   * Cards with a matching saved position are made visible, moved, and flipped face-down.
+   */
+  applyState(positions: Record<string, { x: number; z: number }>): void {
+    for (const deck of this.playerDecks) {
+      for (const card of deck.cards) {
+        const pos = positions[card.id]
+        if (pos) {
+          card.object.visible = true
+          card.object.position.x = pos.x
+          card.object.position.z = pos.z
+          card.object.rotation.z = Math.PI // face-down
+        }
+      }
     }
   }
 
@@ -184,7 +282,7 @@ export class NertzGame {
     this.camera.updateProjectionMatrix()
   }
 
-  /** Per-frame update: advances game time and renders the scene */
+  /** Per-frame update: advances animations and renders the scene */
   private update() {
     const now = performance.now()
     const deltaTime = Math.min((now - this.lastTime) / 1000, MAX_DELTA_TIME)
@@ -195,13 +293,27 @@ export class NertzGame {
       this.shuffle.update(deltaTime)
       // Kick off the deal animation once shuffling is done
       if (this.shuffle.isComplete) {
-        this.intro = new IntroAnimation(this.shuffle.shuffledCards, this.camera)
+        this.intro = new IntroAnimation(
+          this.shuffle.shuffledCards,
+          this.camera,
+          this.localPileX,
+          this.localPileZ
+        )
       }
     } else if (this.intro && !this.intro.isComplete) {
       this.intro.update(deltaTime)
-      // Enable drag once the deal finishes
+      // Once the deal finishes: enable drag for local player's cards and save pile positions
       if (this.intro.isComplete) {
-        this.dragControls.setCards(this.playerDecks.flatMap((d) => d.cards))
+        const localDeck = this.playerDecks[this.localPlayerIndex]
+        if (localDeck) {
+          this.dragControls.setCards(localDeck.cards)
+          // Bulk-save the dealt pile positions so reconnecting players skip the intro
+          const positions: Record<string, { x: number; z: number }> = {}
+          for (const card of localDeck.cards) {
+            positions[card.id] = { x: card.object.position.x, z: card.object.position.z }
+          }
+          socket.emit("set-state", positions)
+        }
       }
     }
 

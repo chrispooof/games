@@ -14,14 +14,19 @@ interface PlayerRef {
   playerId: string
 }
 
+interface GameState {
+  cardPositions?: Record<string, { x: number; z: number }>
+}
+
 type Scene =
   | { type: "lobby" }
   | {
       type: "game"
       roomCode: string
-      playerCount: number
+      maxPlayers: number
       isHost: boolean
       initialPlayers: PlayerRef[]
+      gameState: GameState | null
     }
 
 interface Notification {
@@ -41,7 +46,18 @@ export default function NertzRoute() {
   useEffect(() => {
     if (scene.type !== "game" || !containerRef.current) return
 
-    const game = new NertzGame(containerRef.current, scene.initialPlayers.length)
+    // Players are sorted by join order from the server — local player's index determines
+    // which deck runs the intro animation vs. which are shown at their saved positions
+    const localPlayerIndex = scene.initialPlayers.findIndex((p) => p.playerId === getPlayerId())
+    const cardPositions = scene.gameState?.cardPositions ?? null
+
+    const game = new NertzGame(
+      containerRef.current,
+      scene.maxPlayers,
+      scene.initialPlayers.length,
+      localPlayerIndex >= 0 ? localPlayerIndex : 0,
+      cardPositions
+    )
     gameRef.current = game
 
     return () => {
@@ -104,12 +120,30 @@ export default function NertzRoute() {
       gameRef.current?.applyRemoteAction(action)
     }
 
+    /** Applies saved card positions — used on socket reconnect and when other players
+     *  finish their intro and broadcast their initial pile layout */
+    const onRoomState = ({ gameState }: { gameState: GameState | null }) => {
+      if (gameState?.cardPositions) {
+        gameRef.current?.applyState(gameState.cardPositions)
+      }
+    }
+
+    const onGameStateUpdate = ({
+      cardPositions,
+    }: {
+      cardPositions: Record<string, { x: number; z: number }>
+    }) => {
+      gameRef.current?.applyState(cardPositions)
+    }
+
     socket.on("connect", onConnect)
     socket.on("player-joined", onPlayerJoined)
     socket.on("player-reconnected", onPlayerReconnected)
     socket.on("player-disconnected", onPlayerDisconnected)
     socket.on("player-left", onPlayerLeft)
     socket.on("game-action", onGameAction)
+    socket.on("room-state", onRoomState)
+    socket.on("game-state-update", onGameStateUpdate)
 
     return () => {
       socket.off("connect", onConnect)
@@ -118,19 +152,28 @@ export default function NertzRoute() {
       socket.off("player-disconnected", onPlayerDisconnected)
       socket.off("player-left", onPlayerLeft)
       socket.off("game-action", onGameAction)
+      socket.off("room-state", onRoomState)
+      socket.off("game-state-update", onGameStateUpdate)
     }
   }, [scene])
 
   if (scene.type === "lobby") {
     return (
       <NertzWelcome
-        onHost={(playerCount, roomCode, initialPlayers) => {
+        onHost={(playerCount, roomCode, initialPlayers, gameState, maxPlayers) => {
           setPlayers(initialPlayers.map((p) => p.playerId))
-          setScene({ type: "game", roomCode, playerCount, isHost: true, initialPlayers })
+          setScene({ type: "game", roomCode, maxPlayers, isHost: true, initialPlayers, gameState })
         }}
-        onJoin={(roomCode, initialPlayers) => {
+        onJoin={(roomCode, initialPlayers, gameState, maxPlayers) => {
           setPlayers(initialPlayers.map((p) => p.playerId))
-          setScene({ type: "game", roomCode, playerCount: 1, isHost: false, initialPlayers })
+          setScene({
+            type: "game",
+            roomCode,
+            maxPlayers,
+            isHost: false,
+            initialPlayers,
+            gameState,
+          })
         }}
       />
     )

@@ -3,10 +3,7 @@ import type { Card } from "../../../shared/types/deck"
 import { CAMERA_HEIGHT, CARD_Y_OFFSET } from "../utils/constants"
 
 /** Camera height the scene zooms out to during the deal */
-const INTRO_CAMERA_HEIGHT = 9
-
-/** World-space Z position of the pile cards are dealt into */
-const PILE_Z = 3.5
+const INTRO_CAMERA_HEIGHT = 12
 
 /** Seconds each card takes to travel from grid to pile */
 const CARD_DEAL_DURATION = 0.1
@@ -22,13 +19,17 @@ const ease = (t: number): number => t * t * (3 - 2 * t)
 
 /**
  * One-shot intro animation that deals all cards from their grid layout
- * into a face-down pile at the bottom of the scene while the camera zooms out.
+ * into a face-down pile while the camera zooms out.
  *
  * Call `update(deltaTime)` every frame. Check `isComplete` to know when it ends.
  */
 export class IntroAnimation {
   private cards: Card[]
   private camera: THREE.PerspectiveCamera
+  /** World-space X coordinate the pile lands at */
+  private pileX: number
+  /** World-space Z coordinate the pile lands at */
+  private pileZ: number
   /** Captured grid positions before animation begins */
   private startPositions: THREE.Vector3[]
   private currentIndex = 0
@@ -40,11 +41,15 @@ export class IntroAnimation {
   /**
    * @param cards - All cards to deal, in the order they will be animated
    * @param camera - Scene camera, zoomed out during the sequence
+   * @param pileX - World-space X the pile lands at (default 0)
+   * @param pileZ - World-space Z the pile lands at (default 0)
    */
-  constructor(cards: Card[], camera: THREE.PerspectiveCamera) {
+  constructor(cards: Card[], camera: THREE.PerspectiveCamera, pileX = 0, pileZ = 0) {
     // Snapshot starting positions so we can lerp from them even as objects move
     this.cards = [...cards]
     this.camera = camera
+    this.pileX = pileX
+    this.pileZ = pileZ
     this.startPositions = cards.map((c) => c.object.position.clone())
   }
 
@@ -79,8 +84,8 @@ export class IntroAnimation {
     const start = this.startPositions[this.currentIndex]
 
     // XZ: smooth glide to pile center
-    card.object.position.x = THREE.MathUtils.lerp(start.x, 0, t)
-    card.object.position.z = THREE.MathUtils.lerp(start.z, PILE_Z, t)
+    card.object.position.x = THREE.MathUtils.lerp(start.x, this.pileX, t)
+    card.object.position.z = THREE.MathUtils.lerp(start.z, this.pileZ, t)
 
     // Y: parabolic arc peaks at mid-flight
     card.object.position.y = CARD_Y_OFFSET + CARD_ARC_HEIGHT * Math.sin(raw * Math.PI)
@@ -97,7 +102,7 @@ export class IntroAnimation {
   /** Snaps a card to its final resting position in the pile */
   private landCard(card: Card): void {
     // Tiny Y stack offset prevents z-fighting between piled cards
-    card.object.position.set(0, CARD_Y_OFFSET + this.currentIndex * 0.0005, PILE_Z)
+    card.object.position.set(this.pileX, CARD_Y_OFFSET + this.currentIndex * 0.0005, this.pileZ)
     card.object.rotation.z = Math.PI
 
     this.currentIndex++

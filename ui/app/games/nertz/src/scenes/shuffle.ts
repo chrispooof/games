@@ -47,6 +47,9 @@ export class ShuffleAnimation {
   private cards: Card[]
   /** Grid positions captured before the first frame */
   private startPositions: THREE.Vector3[]
+  /** World-space center that the pile collapses to and riffles around */
+  private centerX: number
+  private centerZ: number
 
   private phase: Phase = "collapse"
   private phaseTimer = 0
@@ -64,9 +67,15 @@ export class ShuffleAnimation {
     return this.cards
   }
 
-  constructor(cards: Card[]) {
+  /**
+   * @param cards - The deck to animate
+   * @param center - World-space point that cards collapse to and riffle around (default origin)
+   */
+  constructor(cards: Card[], center = { x: 0, z: 0 }) {
     this.cards = [...cards]
     this.startPositions = cards.map((c) => c.object.position.clone())
+    this.centerX = center.x
+    this.centerZ = center.z
   }
 
   update(dt: number): void {
@@ -91,8 +100,8 @@ export class ShuffleAnimation {
 
       const te = ease(t)
       const start = this.startPositions[i]
-      card.object.position.x = THREE.MathUtils.lerp(start.x, 0, te)
-      card.object.position.z = THREE.MathUtils.lerp(start.z, 0, te)
+      card.object.position.x = THREE.MathUtils.lerp(start.x, this.centerX, te)
+      card.object.position.z = THREE.MathUtils.lerp(start.z, this.centerZ, te)
       // Parabolic arc over table surface
       card.object.position.y = CARD_Y_OFFSET + i * 0.0005 + COLLAPSE_ARC * Math.sin(t * Math.PI)
       // Flip face-down in the second half of the flight
@@ -100,9 +109,9 @@ export class ShuffleAnimation {
     })
 
     if (this.phaseTimer >= totalDuration) {
-      // Snap every card to its stacked position at center
+      // Snap every card to its stacked position at the seat center
       this.cards.forEach((card, i) => {
-        card.object.position.set(0, CARD_Y_OFFSET + i * 0.0005, 0)
+        card.object.position.set(this.centerX, CARD_Y_OFFSET + i * 0.0005, this.centerZ)
         card.object.rotation.z = Math.PI
       })
       this.transition("split")
@@ -118,15 +127,15 @@ export class ShuffleAnimation {
     const half = Math.floor(this.cards.length / 2)
 
     this.cards.forEach((card, i) => {
-      const targetX = i < half ? -SPLIT_OFFSET_X : SPLIT_OFFSET_X
-      card.object.position.x = THREE.MathUtils.lerp(0, targetX, t)
+      const offset = i < half ? -SPLIT_OFFSET_X : SPLIT_OFFSET_X
+      card.object.position.x = THREE.MathUtils.lerp(this.centerX, this.centerX + offset, t)
     })
 
     if (this.phaseTimer >= SPLIT_DURATION) {
       // Snap and begin riffle
       const half = Math.floor(this.cards.length / 2)
       this.cards.forEach((card, i) => {
-        card.object.position.x = i < half ? -SPLIT_OFFSET_X : SPLIT_OFFSET_X
+        card.object.position.x = this.centerX + (i < half ? -SPLIT_OFFSET_X : SPLIT_OFFSET_X)
       })
       this.beginRiffle()
     }
@@ -173,7 +182,8 @@ export class ShuffleAnimation {
     for (let i = 0; i < merged.length; i++) {
       this.cards[i] = merged[i]
     }
-    this.riffleSourceX = sources
+    // Shift source X values to be relative to the seat center
+    this.riffleSourceX = sources.map((srcOffset) => this.centerX + srcOffset)
 
     this.transition("riffle")
   }
@@ -189,13 +199,13 @@ export class ShuffleAnimation {
       const srcX = this.riffleSourceX[i]
       const targetY = CARD_Y_OFFSET + i * 0.0005
 
-      card.object.position.x = THREE.MathUtils.lerp(srcX, 0, te)
+      card.object.position.x = THREE.MathUtils.lerp(srcX, this.centerX, te)
       card.object.position.y = targetY + RIFFLE_ARC * Math.sin(t * Math.PI)
     })
 
     if (this.phaseTimer >= totalDuration) {
       this.cards.forEach((card, i) => {
-        card.object.position.set(0, CARD_Y_OFFSET + i * 0.0005, 0)
+        card.object.position.set(this.centerX, CARD_Y_OFFSET + i * 0.0005, this.centerZ)
       })
 
       this.passCount++

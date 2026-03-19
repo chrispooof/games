@@ -9,9 +9,24 @@ interface PlayerRef {
   playerId: string
 }
 
+interface GameState {
+  cardPositions?: Record<string, { x: number; z: number }>
+}
+
 interface NertzWelcomeProps {
-  onHost: (playerCount: number, roomCode: string, initialPlayers: PlayerRef[]) => void
-  onJoin: (roomCode: string, initialPlayers: PlayerRef[]) => void
+  onHost: (
+    playerCount: number,
+    roomCode: string,
+    initialPlayers: PlayerRef[],
+    gameState: GameState | null,
+    maxPlayers: number
+  ) => void
+  onJoin: (
+    roomCode: string,
+    initialPlayers: PlayerRef[],
+    gameState: GameState | null,
+    maxPlayers: number
+  ) => void
 }
 
 /**
@@ -30,16 +45,33 @@ const NertzWelcome = ({ onHost, onJoin }: NertzWelcomeProps) => {
       socket.once("connect", () => {
         socket.emit("join-room", { roomCode: data.roomCode, playerId: getPlayerId() })
       })
-      socket.once("room-state", ({ players }: { players: PlayerRef[] }) => {
-        onHost(playerCount, data.roomCode, players)
-      })
+      socket.once(
+        "room-state",
+        ({
+          players,
+          gameState,
+          maxPlayers,
+        }: {
+          players: PlayerRef[]
+          gameState: GameState | null
+          maxPlayers: number
+        }) => {
+          onHost(playerCount, data.roomCode, players, gameState, maxPlayers)
+        }
+      )
     },
   })
 
+  /**
+   * Creates a new game room with the specified player count.
+   */
   const handleCreate = () => {
     createGame.mutate({ playerCount })
   }
 
+  /**
+   * Joins an existing game room with the specified room code.
+   */
   const handleJoin = () => {
     const code = joinCode.trim().toUpperCase()
     if (code.length === 0) return
@@ -47,9 +79,20 @@ const NertzWelcome = ({ onHost, onJoin }: NertzWelcomeProps) => {
     socket.once("connect", () => {
       socket.emit("join-room", { roomCode: code, playerId: getPlayerId() })
     })
-    socket.once("room-state", ({ players }: { players: PlayerRef[] }) => {
-      onJoin(code, players)
-    })
+    socket.once(
+      "room-state",
+      ({
+        players,
+        gameState,
+        maxPlayers,
+      }: {
+        players: PlayerRef[]
+        gameState: GameState | null
+        maxPlayers: number
+      }) => {
+        onJoin(code, players, gameState, maxPlayers)
+      }
+    )
   }
 
   return (

@@ -14,8 +14,15 @@ export const PLAYER_BACK_COLORS: number[] = [
   0x16a085, // player 5 — teal
 ]
 
-/** Z-axis gap between each player's card grid (world units) */
-const DECK_Z_SPACING = 1.5
+/** Seat transform describing where a player's deck sits on the table */
+export interface Seat {
+  /** World-space center X of this player's grid area */
+  x: number
+  /** World-space center Z of this player's grid area */
+  z: number
+  /** Y-axis rotation (radians) applied to each card and the grid layout */
+  angle: number
+}
 
 /**
  * Represents a single player's full 52-card deck in the 3D scene.
@@ -27,7 +34,7 @@ export class PlayerDeck {
   readonly backColor: number
   readonly cards: Card[] = []
 
-  /** @param playerIndex - Zero-based index, used for color selection and Z positioning */
+  /** @param playerIndex - Zero-based index, used for color selection */
   constructor(playerIndex: number) {
     this.playerIndex = playerIndex
     this.backColor = PLAYER_BACK_COLORS[playerIndex % PLAYER_BACK_COLORS.length]
@@ -35,20 +42,18 @@ export class PlayerDeck {
 
   /**
    * Clones all 52 cards from the GLB source scene, tints their back materials,
-   * positions them in this player's grid band, and adds them to the scene.
+   * positions them at the given seat around the table, and adds them to the scene.
+   * The grid is rotated by `seat.angle` so the player faces the table center.
    * @param deckScene - The loaded GLB scene used as the mesh template
    * @param scene - The Three.js scene to add card objects into
+   * @param seat - World-space position and Y-rotation for this player's area
    * @returns The array of Card objects created for this player
    */
-  buildFromGLB(deckScene: THREE.Object3D, scene: THREE.Scene): Card[] {
+  buildFromGLB(deckScene: THREE.Object3D, scene: THREE.Scene, seat: Seat): Card[] {
     const totalCols = COLS
     const totalRows = Math.ceil(DECK_CARD_NAME_CONFIG.length / totalCols)
     const offsetX = ((totalCols - 1) * COL_GAP) / 2
     const offsetZ = ((totalRows - 1) * ROW_GAP) / 2
-
-    // Offset each player's grid along Z so decks don't overlap
-    const deckDepth = totalRows * ROW_GAP
-    const playerZOffset = this.playerIndex * (deckDepth + DECK_Z_SPACING)
 
     // Fisher-Yates shuffle so each player gets a randomized card layout
     const shuffledNames = [...DECK_CARD_NAME_CONFIG]
@@ -56,6 +61,9 @@ export class PlayerDeck {
       const j = Math.floor(Math.random() * (i + 1))
       ;[shuffledNames[i], shuffledNames[j]] = [shuffledNames[j], shuffledNames[i]]
     }
+
+    const cos = Math.cos(seat.angle)
+    const sin = Math.sin(seat.angle)
 
     shuffledNames.forEach((name, index) => {
       const source = deckScene.getObjectByName(name)
@@ -75,13 +83,21 @@ export class PlayerDeck {
       )
       this.cards.push(card)
 
+      // Local grid offset (card position relative to seat center)
       const col = index % totalCols
       const row = Math.floor(index / totalCols)
+      const localX = col * COL_GAP - offsetX
+      const localZ = row * ROW_GAP - offsetZ
+
+      // Rotate grid by seat angle (Three.js Y-axis rotation matrix):
+      //   x' = localX * cos(θ) + localZ * sin(θ)
+      //   z' = -localX * sin(θ) + localZ * cos(θ)
       cloned.position.set(
-        col * COL_GAP - offsetX,
+        seat.x + localX * cos + localZ * sin,
         CARD_Y_OFFSET,
-        row * ROW_GAP - offsetZ + playerZOffset
+        seat.z - localX * sin + localZ * cos
       )
+      cloned.rotation.y = seat.angle
       cloned.castShadow = true
       scene.add(cloned)
     })

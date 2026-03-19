@@ -18,8 +18,14 @@ export const SCENE_BACKGROUND_COLOR = 0x1a472a
 /** Camera field of view (degrees) */
 export const CAMERA_FOV = 60
 
-/** Top-down camera height above the table */
-export const CAMERA_HEIGHT = 5
+/** Top-down camera height above the table (high enough to see all seated players) */
+export const CAMERA_HEIGHT = 9
+
+/** Distance from the table center to each player's seat (world units) */
+export const SEAT_RADIUS = 3
+
+/** Distance beyond the seat center where each player's dealt pile lands (world units) */
+export const PILE_OFFSET = 1
 
 /** Directional (key) light color and intensity */
 export const DIR_LIGHT_COLOR = 0xfff5e0
