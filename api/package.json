@@ -4,6 +4,7 @@
   "version": "0.0.1",
   "type": "module",
   "scripts": {
+    "db:setup": "tsx scripts/setup-local-db.ts",
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
@@ -11,8 +12,12 @@
     "format": "prettier --write ."
   },
   "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.1012.0",
+    "@aws-sdk/lib-dynamodb": "^3.1012.0",
     "@fastify/cors": "^10.0.0",
     "@trpc/server": "^11.0.0",
+    "dotenv": "^16.4.7",
+    "dynamodb-toolbox": "^2.8.0",
     "fastify": "^5.0.0",
     "socket.io": "^4.8.0",
     "zod": "^3.23.0"

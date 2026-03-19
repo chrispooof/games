@@ -4,7 +4,10 @@
   "workspaces": ["ui", "api"],
   "scripts": {
     "prepare": "husky",
-    "dev": "concurrently -n api,ui -c blue.bold,green.bold \"npm run dev -w api\" \"npm run dev -w ui\"",
+    "docker:up": "docker compose up -d",
+    "docker:down": "docker compose down",
+    "db:setup": "npm run db:setup -w api",
+    "dev": "npm run docker:up && npm run db:setup && concurrently -n api,ui -c blue.bold,green.bold \"npm run dev -w api\" \"npm run dev -w ui\"",
     "build": "nx run-many -t build",
     "test": "nx run-many -t test",
     "typecheck": "nx run-many -t typecheck",
