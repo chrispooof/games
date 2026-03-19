@@ -1,0 +1,1 @@
+import{p as t,w as e}from"./chunk-EPOLDU6W-DzQQKTre.js";const o=()=>t.jsx("div",{className:"flex justify-center",children:t.jsx("h1",{className:"text-4xl font-bold",children:"About"})}),r=()=>[{title:"About"},{name:"description",content:"Learn more about this project."}],n=()=>t.jsx(o,{}),a=e(n);export{a as default,r as meta};
