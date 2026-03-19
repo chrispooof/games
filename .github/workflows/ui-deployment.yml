@@ -27,6 +27,9 @@ jobs:
       - name: Build UI
         run: npx nx run @games/ui:build
 
+      - name: Copy index.html to 404.html for SPA routing
+        run: cp ./ui/build/client/index.html ./ui/build/client/404.html
+
       - name: Deploy to release
         uses: peaceiris/actions-gh-pages@v4
         with:
