@@ -1,12 +1,17 @@
 import { useState } from "react"
 import { trpc } from "~/lib/trpc"
 import { socket } from "~/lib/socket"
+import { getPlayerId } from "~/lib/player-id"
 
 type View = "welcome" | "hosting" | "joining"
 
+interface PlayerRef {
+  playerId: string
+}
+
 interface NertzWelcomeProps {
-  onHost: (playerCount: number, roomCode: string) => void
-  onJoin: (roomCode: string) => void
+  onHost: (playerCount: number, roomCode: string, initialPlayers: PlayerRef[]) => void
+  onJoin: (roomCode: string, initialPlayers: PlayerRef[]) => void
 }
 
 /**
@@ -20,8 +25,14 @@ const NertzWelcome = ({ onHost, onJoin }: NertzWelcomeProps) => {
 
   const createGame = trpc.game.create.useMutation({
     onSuccess: (data) => {
-      onHost(playerCount, data.roomCode)
-      console.log("data:", data)
+      // Host also joins the room via socket so they receive real-time events
+      socket.connect()
+      socket.once("connect", () => {
+        socket.emit("join-room", { roomCode: data.roomCode, playerId: getPlayerId() })
+      })
+      socket.once("room-state", ({ players }: { players: PlayerRef[] }) => {
+        onHost(playerCount, data.roomCode, players)
+      })
     },
   })
 
@@ -33,11 +44,11 @@ const NertzWelcome = ({ onHost, onJoin }: NertzWelcomeProps) => {
     const code = joinCode.trim().toUpperCase()
     if (code.length === 0) return
     socket.connect()
-    socket.on("connect", () => {
-      socket.emit("join-room", code)
+    socket.once("connect", () => {
+      socket.emit("join-room", { roomCode: code, playerId: getPlayerId() })
     })
-    socket.on("player-joined", () => {
-      onJoin(code)
+    socket.once("room-state", ({ players }: { players: PlayerRef[] }) => {
+      onJoin(code, players)
     })
   }
 

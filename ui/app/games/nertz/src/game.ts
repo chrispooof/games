@@ -1,5 +1,6 @@
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js"
 import * as THREE from "three"
+import { socket } from "~/lib/socket"
 import deckUrl from "~/assets/deck.glb?url"
 import { Table } from "./world/terrain"
 import { PlayerDeck } from "./world/player-deck"
@@ -46,10 +47,16 @@ export class NertzGame {
   private intro: IntroAnimation | null = null
   private lastTime = performance.now()
   private totalTime = 0
+  /** Number of player decks to add once the GLB finishes loading */
+  private initialPlayerCount: number
 
-  /** @param container - The DOM element that will host the WebGL canvas */
-  constructor(container: HTMLElement) {
+  /**
+   * @param container - The DOM element that will host the WebGL canvas
+   * @param initialPlayerCount - How many player decks to create on load (default 1)
+   */
+  constructor(container: HTMLElement, initialPlayerCount = 1) {
     this.container = container
+    this.initialPlayerCount = initialPlayerCount
     this.renderer = new THREE.WebGLRenderer({ antialias: true })
     this.scene = new THREE.Scene()
     this.scene.background = new THREE.Color(SCENE_BACKGROUND_COLOR)
@@ -62,7 +69,14 @@ export class NertzGame {
     this.loader = new GLTFLoader()
     this.addLights()
     this.refreshTable()
-    this.dragControls = new DragControls(this.camera, this.renderer.domElement, [])
+    this.dragControls = new DragControls(
+      this.camera,
+      this.renderer.domElement,
+      [],
+      (cardId, position) => {
+        socket.emit("game-action", { type: "move-card", cardId, position })
+      }
+    )
     this.loadDeck()
     this.init()
   }
@@ -115,11 +129,13 @@ export class NertzGame {
     this.scene.add(this.table)
   }
 
-  /** Loads the deck GLB once and adds the first player when ready */
+  /** Loads the deck GLB once and adds the initial player decks when ready */
   private loadDeck() {
     this.loader.load(deckUrl, (deckGlb) => {
       this.deckGlbScene = deckGlb.scene
-      this.addPlayer()
+      for (let i = 0; i < this.initialPlayerCount; i++) {
+        this.addPlayer()
+      }
     })
   }
 
@@ -142,6 +158,22 @@ export class NertzGame {
     } else {
       this.dragControls.setCards(this.playerDecks.flatMap((d) => d.cards))
     }
+  }
+
+  /**
+   * Applies a game action received from another player via the server.
+   * Currently handles 'move-card': moves the identified card to the given position.
+   */
+  applyRemoteAction(action: {
+    type: string
+    cardId: string
+    position: { x: number; z: number }
+  }): void {
+    if (action.type !== "move-card") return
+    const card = this.playerDecks.flatMap((d) => d.cards).find((c) => c.id === action.cardId)
+    if (!card) return
+    card.object.position.x = action.position.x
+    card.object.position.z = action.position.z
   }
 
   /** Keeps the renderer and camera aspect ratio in sync with the container size */

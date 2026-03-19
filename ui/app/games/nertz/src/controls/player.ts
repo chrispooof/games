@@ -28,15 +28,25 @@ export class DragControls {
   /** Reusable target vector for plane intersection to avoid per-frame allocation */
   private planeHit = new THREE.Vector3()
 
+  /** Fired after a card is dropped with its ID and final world-space position */
+  private onCardDrop?: (cardId: string, position: { x: number; z: number }) => void
+
   /**
    * @param camera - The scene camera used for raycasting
    * @param domElement - The canvas element to attach mouse listeners to
    * @param cards - Array of draggable cards (may be populated after construction)
+   * @param onCardDrop - Optional callback invoked when a card is released
    */
-  constructor(camera: THREE.PerspectiveCamera, domElement: HTMLElement, cards: Card[]) {
+  constructor(
+    camera: THREE.PerspectiveCamera,
+    domElement: HTMLElement,
+    cards: Card[],
+    onCardDrop?: (cardId: string, position: { x: number; z: number }) => void
+  ) {
     this.camera = camera
     this.domElement = domElement
     this.cards = cards
+    this.onCardDrop = onCardDrop
   }
 
   /** Attaches mousedown / mousemove / mouseup listeners to the canvas */
@@ -135,6 +145,13 @@ export class DragControls {
 
     // Settle the card back onto the table surface
     this.dragging.object.position.y = CARD_Y_OFFSET
+
+    // Notify the game of the final card position so it can be broadcast
+    this.onCardDrop?.(this.dragging.id, {
+      x: this.dragging.object.position.x,
+      z: this.dragging.object.position.z,
+    })
+
     this.dragging = null
   }
 }

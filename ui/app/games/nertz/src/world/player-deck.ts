@@ -50,7 +50,14 @@ export class PlayerDeck {
     const deckDepth = totalRows * ROW_GAP
     const playerZOffset = this.playerIndex * (deckDepth + DECK_Z_SPACING)
 
-    DECK_CARD_NAME_CONFIG.forEach((name, index) => {
+    // Fisher-Yates shuffle so each player gets a randomized card layout
+    const shuffledNames = [...DECK_CARD_NAME_CONFIG]
+    for (let i = shuffledNames.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1))
+      ;[shuffledNames[i], shuffledNames[j]] = [shuffledNames[j], shuffledNames[i]]
+    }
+
+    shuffledNames.forEach((name, index) => {
       const source = deckScene.getObjectByName(name)
       if (!source) {
         console.warn(`Card object not found in GLB: ${name}`)

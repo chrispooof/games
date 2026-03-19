@@ -1,5 +1,11 @@
-import { PutItemCommand, GetItemCommand, DeleteItemCommand } from "dynamodb-toolbox"
-import { GameEntity, PlayerEntity, GameStateEntity } from "./table"
+import {
+  PutItemCommand,
+  GetItemCommand,
+  DeleteItemCommand,
+  QueryCommand,
+  UpdateItemCommand,
+} from "dynamodb-toolbox"
+import { CardGamesTable, GameEntity, PlayerEntity, GameStateEntity } from "./table"
 
 export type GameStatus = "waiting" | "in-progress" | "finished"
 
@@ -132,4 +138,29 @@ export const getGameState = async (roomCode: string): Promise<GameState | null> 
   if (!Item) return null
 
   return Item as unknown as GameState
+}
+
+/**
+ * Returns all player records currently stored for a room.
+ */
+export const getPlayers = async (roomCode: string): Promise<GamePlayer[]> => {
+  const { Items } = await CardGamesTable.build(QueryCommand)
+    .entities(PlayerEntity)
+    .query({ partition: `GAME#${roomCode}`, range: { beginsWith: "PLAYER#" } })
+    .send()
+
+  return (Items ?? []) as unknown as GamePlayer[]
+}
+
+/**
+ * Updates the socketId on an existing player record after a reconnection.
+ */
+export const updatePlayerSocket = async (
+  roomCode: string,
+  playerId: string,
+  socketId: string,
+): Promise<void> => {
+  await PlayerEntity.build(UpdateItemCommand)
+    .item({ PK: `GAME#${roomCode}`, SK: `PLAYER#${playerId}`, socketId })
+    .send()
 }
