@@ -4,14 +4,15 @@
   "workspaces": ["ui", "api"],
   "scripts": {
     "prepare": "husky",
-    "dev": "nx run @games/ui:dev",
-    "build": "nx run @games/ui:build",
+    "dev": "concurrently -n api,ui -c blue.bold,green.bold \"npm run dev -w api\" \"npm run dev -w ui\"",
+    "build": "nx run-many -t build",
     "test": "nx run-many -t test",
     "typecheck": "nx run-many -t typecheck",
     "lint": "nx run-many -t lint",
     "format": "nx run-many -t format"
   },
   "devDependencies": {
+    "concurrently": "^9.0.0",
     "husky": "^9.1.7",
     "nx": "latest",
     "prettier": "^3.8.1"

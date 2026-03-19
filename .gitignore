@@ -1,6 +1,6 @@
 .DS_Store
 .env
-/node_modules/
+node_modules
 
 # React Router (ui project)
 /ui/.react-router/
@@ -9,5 +9,8 @@
 # Nx
 .nx/cache
 .nx/workspace-data
+
+# API build output
+/api/dist
 
 .claude

@@ -1,9 +1,8 @@
 import { useState } from "react"
+import { trpc } from "~/lib/trpc"
+import { socket } from "~/lib/socket"
 
 type View = "welcome" | "hosting" | "joining"
-
-/** Generates a random 6-character uppercase alphanumeric room code */
-const generateRoomCode = (): string => Math.random().toString(36).slice(2, 8).toUpperCase()
 
 interface NertzWelcomeProps {
   onHost: (playerCount: number, roomCode: string) => void
@@ -19,14 +18,27 @@ const NertzWelcome = ({ onHost, onJoin }: NertzWelcomeProps) => {
   const [playerCount, setPlayerCount] = useState(2)
   const [joinCode, setJoinCode] = useState("")
 
+  const createGame = trpc.game.create.useMutation({
+    onSuccess: (data) => {
+      onHost(playerCount, data.roomCode)
+      console.log("data:", data)
+    },
+  })
+
   const handleCreate = () => {
-    onHost(playerCount, generateRoomCode())
+    createGame.mutate({ playerCount })
   }
 
   const handleJoin = () => {
     const code = joinCode.trim().toUpperCase()
     if (code.length === 0) return
-    onJoin(code)
+    socket.connect()
+    socket.on("connect", () => {
+      socket.emit("join-room", code)
+    })
+    socket.on("player-joined", () => {
+      onJoin(code)
+    })
   }
 
   return (

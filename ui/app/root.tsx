@@ -1,7 +1,13 @@
+import { useState } from "react"
 import { isRouteErrorResponse, Links, Meta, Outlet, Scripts, ScrollRestoration } from "react-router"
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
+import { httpBatchLink } from "@trpc/client"
 
 import type { Route } from "./+types/root"
+import { trpc } from "~/lib/trpc"
 import "./app.css"
+
+const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:3001"
 
 export const links: Route.LinksFunction = () => [
   { rel: "preconnect", href: "https://fonts.googleapis.com" },
@@ -36,7 +42,20 @@ export function Layout({ children }: { children: React.ReactNode }) {
 }
 
 export default function App() {
-  return <Outlet />
+  const [queryClient] = useState(() => new QueryClient())
+  const [trpcClient] = useState(() =>
+    trpc.createClient({
+      links: [httpBatchLink({ url: `${API_URL}/trpc` })],
+    })
+  )
+
+  return (
+    <trpc.Provider client={trpcClient} queryClient={queryClient}>
+      <QueryClientProvider client={queryClient}>
+        <Outlet />
+      </QueryClientProvider>
+    </trpc.Provider>
+  )
 }
 
 export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
