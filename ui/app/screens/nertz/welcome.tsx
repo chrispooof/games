@@ -2,6 +2,7 @@ import { useState } from "react"
 import { trpc } from "~/lib/trpc"
 import { socket } from "~/lib/socket"
 import { getPlayerId } from "~/lib/player-id"
+import Button from "~/components/button"
 
 type View = "welcome" | "hosting" | "joining"
 
@@ -35,6 +36,7 @@ interface NertzWelcomeProps {
  */
 const NertzWelcome = ({ onHost, onJoin }: NertzWelcomeProps) => {
   const [view, setView] = useState<View>("welcome")
+  const [isLoading, setIsLoading] = useState(false)
   const [playerCount, setPlayerCount] = useState(2)
   const [joinCode, setJoinCode] = useState("")
   const [joinError, setJoinError] = useState<string | null>(null)
@@ -79,6 +81,7 @@ const NertzWelcome = ({ onHost, onJoin }: NertzWelcomeProps) => {
     setJoinError(null)
     socket.connect()
     socket.once("connect", () => {
+      setIsLoading(true)
       socket.emit("join-room", { roomCode: code, playerId: getPlayerId() })
     })
 
@@ -91,6 +94,7 @@ const NertzWelcome = ({ onHost, onJoin }: NertzWelcomeProps) => {
       gameState: GameState | null
       maxPlayers: number
     }) => {
+      setIsLoading(false)
       socket.off("error", onError)
       onJoin(code, players, gameState, maxPlayers)
     }
@@ -99,6 +103,7 @@ const NertzWelcome = ({ onHost, onJoin }: NertzWelcomeProps) => {
       socket.off("room-state", onRoomState)
       socket.disconnect()
       setJoinError(message)
+      setIsLoading(false)
     }
 
     socket.once("room-state", onRoomState)
@@ -119,18 +124,10 @@ const NertzWelcome = ({ onHost, onJoin }: NertzWelcomeProps) => {
           <h1 className="text-8xl font-black text-white tracking-tight drop-shadow-2xl">Nertz!</h1>
 
           <div className="flex gap-4">
-            <button
-              onClick={() => setView("hosting")}
-              className="px-8 py-4 bg-amber-600 hover:bg-amber-500 text-white font-bold text-lg rounded-lg shadow-lg transition-colors cursor-pointer"
-            >
-              Host a Game
-            </button>
-            <button
-              onClick={() => setView("joining")}
-              className="px-8 py-4 bg-white/10 hover:bg-white/20 text-white font-bold text-lg rounded-lg shadow-lg transition-colors border border-white/20 cursor-pointer"
-            >
+            <Button onClick={() => setView("hosting")}>Host a Game</Button>
+            <Button variant="secondary" onClick={() => setView("joining")}>
               Join a Game
-            </button>
+            </Button>
           </div>
         </div>
       )}
@@ -156,19 +153,13 @@ const NertzWelcome = ({ onHost, onJoin }: NertzWelcomeProps) => {
             <p className="text-white/40 text-xs text-center">Between 2 and 8 players</p>
           </div>
 
-          <button
-            onClick={handleCreate}
-            className="w-full px-8 py-4 bg-amber-600 hover:bg-amber-500 text-white font-bold text-lg rounded-lg shadow-lg transition-colors cursor-pointer"
-          >
+          <Button onClick={handleCreate} isLoading={createGame.isPending} className="w-full">
             Create Game
-          </button>
+          </Button>
 
-          <button
-            onClick={() => setView("welcome")}
-            className="text-white/50 hover:text-white/80 text-sm transition-colors cursor-pointer"
-          >
+          <Button variant="tertiary" onClick={() => setView("welcome")}>
             ← Back
-          </button>
+          </Button>
         </div>
       )}
 
@@ -192,20 +183,18 @@ const NertzWelcome = ({ onHost, onJoin }: NertzWelcomeProps) => {
 
           {joinError && <p className="text-red-400 text-sm text-center -mt-4">{joinError}</p>}
 
-          <button
+          <Button
+            isLoading={isLoading}
             onClick={handleJoin}
-            disabled={joinCode.trim().length === 0}
-            className="w-full px-8 py-4 bg-amber-600 hover:bg-amber-500 disabled:bg-white/10 disabled:text-white/30 disabled:cursor-not-allowed text-white font-bold text-lg rounded-lg shadow-lg transition-colors cursor-pointer"
+            isDisabled={joinCode.trim().length < 6}
+            className="w-full"
           >
             Join
-          </button>
+          </Button>
 
-          <button
-            onClick={() => setView("welcome")}
-            className="text-white/50 hover:text-white/80 text-sm transition-colors cursor-pointer"
-          >
+          <Button variant="tertiary" onClick={() => setView("welcome")}>
             ← Back
-          </button>
+          </Button>
         </div>
       )}
     </div>
