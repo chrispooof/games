@@ -181,7 +181,6 @@ export default function NertzRoute() {
 
   return (
     <div className="relative w-full flex-1 min-h-0 rounded-xl overflow-hidden">
-      {/* Connected player swatches — color matches each player's card-back */}
       {notification && (
         <div className="absolute top-4 left-1/2 -translate-x-1/2 z-20 flex items-center gap-2 px-4 py-2 rounded-lg bg-black/70 backdrop-blur-sm border border-white/10 text-white text-sm font-semibold shadow-lg pointer-events-none select-none">
           <span

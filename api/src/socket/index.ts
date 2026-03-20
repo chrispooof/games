@@ -35,43 +35,48 @@ export const registerSocketHandlers = (io: Server): void => {
       async ({ roomCode, playerId }: { roomCode: string; playerId: string }) => {
         socket.join(roomCode)
         socketToPlayer.set(socket.id, { roomCode, playerId })
-
-        // Cancel any pending removal from a previous disconnect
-        const pendingTimer = disconnectTimers.get(playerId)
-        if (pendingTimer) {
-          clearTimeout(pendingTimer)
-          disconnectTimers.delete(playerId)
-        }
-
-        // Determine if this is a reconnection or a fresh join
-        const currentPlayers = await getPlayers(roomCode)
-        const isReconnect = currentPlayers.some((p) => p.playerId === playerId)
-
-        if (isReconnect) {
-          await updatePlayerSocket(roomCode, playerId, socket.id)
-          io.to(roomCode).emit("player-reconnected", { playerId })
-          console.log(`[socket] ${playerId} reconnected to room ${roomCode}`)
+        // Validate if room exists
+        const game = await getGame(roomCode)
+        if (!game) {
+          console.log(`[socket] Room ${roomCode} not found`)
+          socket.emit("error", { message: "Room not found" })
         } else {
-          await addPlayer(roomCode, playerId, socket.id)
-          io.to(roomCode).emit("player-joined", { playerId })
-          console.log(`[socket] ${playerId} joined room ${roomCode}`)
-        }
+          // Cancel any pending removal from a previous disconnect
+          const pendingTimer = disconnectTimers.get(playerId)
+          if (pendingTimer) {
+            clearTimeout(pendingTimer)
+            disconnectTimers.delete(playerId)
+          }
 
-        // Send the joining player the current room state — players sorted by join order
-        const [players, game, gameState] = await Promise.all([
-          getPlayers(roomCode),
-          getGame(roomCode),
-          getGameState(roomCode),
-        ])
-        const sortedPlayers = [...players].sort(
-          (a, b) => new Date(a.joinedAt).getTime() - new Date(b.joinedAt).getTime(),
-        )
-        socket.emit("room-state", {
-          players: sortedPlayers,
-          maxPlayers: game?.playerCount ?? 1,
-          gameState: gameState?.state ?? null,
-        })
-      },
+          // Determine if this is a reconnection or a fresh join
+          const currentPlayers = await getPlayers(roomCode)
+          const isReconnect = currentPlayers.some((p) => p.playerId === playerId)
+
+          if (isReconnect) {
+            await updatePlayerSocket(roomCode, playerId, socket.id)
+            io.to(roomCode).emit("player-reconnected", { playerId })
+            console.log(`[socket] ${playerId} reconnected to room ${roomCode}`)
+          } else {
+            await addPlayer(roomCode, playerId, socket.id)
+            io.to(roomCode).emit("player-joined", { playerId })
+            console.log(`[socket] ${playerId} joined room ${roomCode}`)
+          }
+
+          // Send the joining player the current room state — players sorted by join order
+          const [players, gameState] = await Promise.all([
+            getPlayers(roomCode),
+            getGameState(roomCode),
+          ])
+          const sortedPlayers = [...players].sort(
+            (a, b) => new Date(a.joinedAt).getTime() - new Date(b.joinedAt).getTime(),
+          )
+          socket.emit("room-state", {
+            players: sortedPlayers,
+            maxPlayers: game?.playerCount ?? 1,
+            gameState: gameState?.state ?? null,
+          })
+        }
+      }
     )
 
     /**

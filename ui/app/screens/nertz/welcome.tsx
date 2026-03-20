@@ -37,6 +37,7 @@ const NertzWelcome = ({ onHost, onJoin }: NertzWelcomeProps) => {
   const [view, setView] = useState<View>("welcome")
   const [playerCount, setPlayerCount] = useState(2)
   const [joinCode, setJoinCode] = useState("")
+  const [joinError, setJoinError] = useState<string | null>(null)
 
   const createGame = trpc.game.create.useMutation({
     onSuccess: (data) => {
@@ -75,24 +76,33 @@ const NertzWelcome = ({ onHost, onJoin }: NertzWelcomeProps) => {
   const handleJoin = () => {
     const code = joinCode.trim().toUpperCase()
     if (code.length === 0) return
+    setJoinError(null)
     socket.connect()
     socket.once("connect", () => {
       socket.emit("join-room", { roomCode: code, playerId: getPlayerId() })
     })
-    socket.once(
-      "room-state",
-      ({
-        players,
-        gameState,
-        maxPlayers,
-      }: {
-        players: PlayerRef[]
-        gameState: GameState | null
-        maxPlayers: number
-      }) => {
-        onJoin(code, players, gameState, maxPlayers)
-      }
-    )
+
+    const onRoomState = ({
+      players,
+      gameState,
+      maxPlayers,
+    }: {
+      players: PlayerRef[]
+      gameState: GameState | null
+      maxPlayers: number
+    }) => {
+      socket.off("error", onError)
+      onJoin(code, players, gameState, maxPlayers)
+    }
+
+    const onError = ({ message }: { message: string }) => {
+      socket.off("room-state", onRoomState)
+      socket.disconnect()
+      setJoinError(message)
+    }
+
+    socket.once("room-state", onRoomState)
+    socket.once("error", onError)
   }
 
   return (
@@ -179,6 +189,8 @@ const NertzWelcome = ({ onHost, onJoin }: NertzWelcomeProps) => {
               className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-lg text-white text-2xl font-bold text-center tracking-widest uppercase placeholder:text-white/20 focus:outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-400/30"
             />
           </div>
+
+          {joinError && <p className="text-red-400 text-sm text-center -mt-4">{joinError}</p>}
 
           <button
             onClick={handleJoin}
