@@ -8,9 +8,13 @@ import { PlayerDeck, type Seat } from "./world/player-deck"
 import { DragControls } from "./controls/player"
 import { ShuffleAnimation } from "./scenes/shuffle"
 import { IntroAnimation } from "./scenes/intro"
+import { computeSeat, computeDealPiles } from "./utils/geometry"
+import type { GameAction, ActionResult } from "./types/actions"
+import type { Card } from "../../shared/types/deck"
 import {
   AMBIENT_LIGHT_COLOR,
   AMBIENT_LIGHT_INTENSITY,
+  CARD_Y_OFFSET,
   CAMERA_FOV,
   CAMERA_HEIGHT,
   INTRO_CAMERA_HEIGHT,
@@ -27,13 +31,33 @@ import {
   SHADOW_MAP_SIZE,
 } from "./utils/constants"
 
+/** Pile indices in the 7-element computeDealPiles array */
+const PILE_NERTZ = 0
+const PILE_WORK_START = 1 // work piles at indices 1–4
+const PILE_WASTE = 5
+const PILE_STOCK = 6
+
+/** How far each card in a fanned work pile is offset from the previous (world units) */
+const WORK_PILE_FAN_OFFSET = 0.2
+
+/** Local pile state maintained in parallel with the server */
+interface LocalPileState {
+  nertzPile: string[]
+  workPiles: [string[], string[], string[], string[]]
+  stock: string[]
+  waste: string[]
+}
+
 /**
  * Main game class for Nertz. Owns the Three.js renderer, scene, and game loop.
  * Mount it by passing a container element; tear it down by calling `destroy()`.
  *
- * Players sit around a circular table. All clients use the same world-space seat
- * positions (determined by join order); each client rotates its camera so its own
- * deck always appears at the bottom of the screen.
+ * Pile layout per player (7 piles, centered):
+ *   [Nertz, Work1, Work2, Work3, Work4, Waste, Stock]
+ *    0       1      2      3      4      5      6
+ *
+ * Work piles are displayed as fanned stacks — each card offset toward the table
+ * center so all cards are visible. The camera zooms out as work piles grow.
  */
 export class NertzGame {
   private container: HTMLElement
@@ -50,24 +74,31 @@ export class NertzGame {
   private intro: IntroAnimation | null = null
   private lastTime = performance.now()
   private totalTime = 0
-  /** Total seats around the table — used for consistent angle computation across all clients */
+  /** Total seats around the table */
   private maxPlayers: number
   /** How many player decks to add once the GLB finishes loading */
   private initialDeckCount: number
-  /** Which deck index belongs to the local player (runs the intro animation) */
+  /** Which deck index belongs to the local player */
   private localPlayerIndex: number
-  /** Seat transform for the local player — used to compute deal pile positions */
+  /** Reference to the local player's deck */
+  private localDeck: PlayerDeck | null = null
+  /** Seat transform for the local player */
   private localSeat: Seat | null = null
-  /** Saved card positions from the server — used to skip intro and restore state */
+  /** All seven pile positions for the local player (set after intro completes) */
+  private localPilePositions: Array<{ x: number; z: number }> | null = null
+  /** Pile ordering for the local player — updated on confirmed server actions */
+  private localPileState: LocalPileState | null = null
+  /** Saved positions from the server — skips intro when present */
   private initialCardPositions: Record<string, { x: number; z: number }> | null
+  /** In-flight typed action awaiting an `action-result` response */
+  private pendingAction: GameAction | null = null
 
   /**
    * @param container - The DOM element that will host the WebGL canvas
-   * @param maxPlayers - Total seat count around the table; governs seat angle spacing
-   * @param initialDeckCount - How many player decks to create on load (default 1)
-   * @param localPlayerIndex - Deck index for the local player; that deck runs the intro (default 0)
-   * @param initialCardPositions - Saved positions from the server; when present, local player's
-   *   deck skips the intro animation and cards are placed at their last known positions
+   * @param maxPlayers - Total seat count; governs seat angle spacing
+   * @param initialDeckCount - How many player decks to create on load
+   * @param localPlayerIndex - Deck index for the local player
+   * @param initialCardPositions - Saved server positions; skips the intro when present
    */
   constructor(
     container: HTMLElement,
@@ -99,27 +130,13 @@ export class NertzGame {
       this.camera,
       this.renderer.domElement,
       [],
-      (cardId, position) => {
-        socket.emit("game-action", { type: "move-card", cardId, position })
+      (cardId, position, foundationSlotIndex, workPileIndex) => {
+        this.handleCardDrop(cardId, position, foundationSlotIndex, workPileIndex)
       }
     )
     this.dragControls.setFoundationSlots(this.foundationArea.slots)
     this.loadDeck()
     this.init()
-  }
-
-  /**
-   * Computes the world-space seat transform for player at `index` in a game of `total` players.
-   * Seat 0 is at positive-Z (south); seats increment clockwise when viewed top-down.
-   * The grid is oriented so the player faces the table center (rotation.y = angle).
-   */
-  private computeSeat(index: number, total: number): Seat {
-    const angle = (2 * Math.PI * index) / total
-    return {
-      x: Math.sin(angle) * SEAT_RADIUS,
-      z: Math.cos(angle) * SEAT_RADIUS,
-      angle,
-    }
   }
 
   /** Mounts the canvas, attaches event listeners, and starts the render loop */
@@ -128,9 +145,7 @@ export class NertzGame {
     window.addEventListener("resize", this.onResize)
     this.dragControls.attach()
 
-    // Orient the camera so the local player's seat is always at the bottom of the screen.
-    // camera.up is set to the vector pointing AWAY from the local seat (toward top of screen).
-    const localSeat = this.computeSeat(this.localPlayerIndex, this.maxPlayers)
+    const localSeat = computeSeat(this.localPlayerIndex, this.maxPlayers, SEAT_RADIUS)
     this.camera.position.set(0, CAMERA_HEIGHT, 0)
     this.camera.up.set(-Math.sin(localSeat.angle), 0, -Math.cos(localSeat.angle))
     this.camera.lookAt(0, 0, 0)
@@ -157,19 +172,12 @@ export class NertzGame {
     this.scene.add(new THREE.AmbientLight(AMBIENT_LIGHT_COLOR, AMBIENT_LIGHT_INTENSITY))
   }
 
-  /**
-   * Rebuilds the circular table felt. The radius is fixed to cover all possible seat grids.
-   * Called once on construction; the size doesn't change when players join since seats
-   * are always within SEAT_RADIUS of center.
-   */
   private refreshTable() {
     if (this.table) this.scene.remove(this.table)
-    // Cover grid depth beyond the seat center; add generous padding
     this.table = new Table(SEAT_RADIUS + 3)
     this.scene.add(this.table)
   }
 
-  /** Loads the deck GLB once and adds the initial player decks when ready */
   private loadDeck() {
     this.loader.load(deckUrl, (deckGlb) => {
       this.deckGlbScene = deckGlb.scene
@@ -180,38 +188,36 @@ export class NertzGame {
   }
 
   /**
-   * Adds a new player deck at the next available seat around the table.
-   * - Local player's deck: runs shuffle → intro unless saved positions exist,
-   *   in which case cards are placed directly and drag is enabled immediately.
-   * - Remote player decks: positioned from saved state if available, otherwise
-   *   hidden until `applyState` is called when they complete their own intro.
+   * Adds a new player deck at the next available seat.
+   * Local player's deck runs the shuffle → deal intro unless saved positions exist.
+   * Remote decks are hidden until their `game-state-update` arrives.
    */
   addPlayer() {
     if (!this.deckGlbScene) return
     const deckIndex = this.playerDecks.length
     const isLocalPlayer = deckIndex === this.localPlayerIndex
-    const seat = this.computeSeat(deckIndex, this.maxPlayers)
+    const seat = computeSeat(deckIndex, this.maxPlayers, SEAT_RADIUS)
 
     const deck = new PlayerDeck(deckIndex)
     deck.buildFromGLB(this.deckGlbScene, this.scene, seat)
     this.playerDecks.push(deck)
 
     if (isLocalPlayer) {
+      this.localDeck = deck
       this.localSeat = seat
       const hasPositions = this.applyInitialPositions(deck)
       if (hasPositions) {
-        // Resuming an existing game: skip the intro, zoom the camera out, and re-enable drag
         this.camera.position.y = INTRO_CAMERA_HEIGHT
-        this.dragControls.setCards(deck.cards)
+        this.localPilePositions = computeDealPiles(seat, SEAT_RADIUS, PILE_OFFSET)
+        this.updateDraggableCards()
+        this.registerWorkPilesWithDragControls()
+        this.registerStockWithDragControls()
       } else {
-        // Fresh game: run the full shuffle → deal intro sequence
         this.shuffle = new ShuffleAnimation(deck.cards, { x: seat.x, z: seat.z })
       }
     } else {
       const hasPositions = this.applyInitialPositions(deck)
       if (!hasPositions) {
-        // Other player hasn't finished their intro yet — hide their deck until
-        // game-state-update arrives with their initial pile layout
         for (const card of deck.cards) {
           card.object.visible = false
         }
@@ -219,48 +225,30 @@ export class NertzGame {
     }
   }
 
-  /**
-   * Computes the six world-space pile positions for a player's dealt hand.
-   * Piles are arranged in a row perpendicular to the radial direction, just in front of the seat:
-   *   [Nertz, Work1, Work2, Work3, Work4, Stock]
-   */
-  private computeDealPiles(seat: Seat): Array<{ x: number; z: number }> {
-    const r = SEAT_RADIUS - PILE_OFFSET
-    const cx = Math.sin(seat.angle) * r
-    const cz = Math.cos(seat.angle) * r
-    // Perpendicular direction for spreading the row of piles
-    const perpX = Math.cos(seat.angle)
-    const perpZ = -Math.sin(seat.angle)
-    const spacing = 0.85
-
-    return Array.from({ length: 6 }, (_, i) => {
-      const offset = (i - 2.5) * spacing
-      return { x: cx + perpX * offset, z: cz + perpZ * offset }
-    })
-  }
+  // ---------------------------------------------------------------------------
+  // Display state helpers
+  // ---------------------------------------------------------------------------
 
   /**
-   * Returns the correct rotation.z for a card being restored from saved state.
-   * Cards at work pile positions (piles 1–4) for their owning player are face-up (0);
-   * everything else is face-down (π).
-   * Card IDs are prefixed with `p{index}_` so we can derive the owning player's seat.
+   * Returns face rotation (rotation.z) for a card at the given position during state restore.
+   * Foundation cards are face-up (0); nertz pile top and work pile cards face-up;
+   * everything else face-down (π).
    */
   private getFaceRotation(cardId: string, x: number, z: number): number {
+    if (this.getFoundationAngle(x, z) !== null) return 0
+
     const match = cardId.match(/^p(\d+)_/)
     if (!match) return Math.PI
-    const seat = this.computeSeat(parseInt(match[1]), this.maxPlayers)
-    const piles = this.computeDealPiles(seat)
-    // Pile 0 is the Nertz pile (top card face-up); piles 1–4 are work piles (face-up)
-    for (let i = 0; i <= 4; i++) {
+    const seat = computeSeat(parseInt(match[1]), this.maxPlayers, SEAT_RADIUS)
+    const piles = computeDealPiles(seat, SEAT_RADIUS, PILE_OFFSET)
+    // Nertz pile position and work pile positions are all face-up on initial deal
+    for (let i = PILE_NERTZ; i <= PILE_WORK_START + 3; i++) {
       if (Math.abs(x - piles[i].x) < 0.01 && Math.abs(z - piles[i].z) < 0.01) return 0
     }
     return Math.PI
   }
 
-  /**
-   * Returns the Y-rotation angle of the nearest foundation slot if the given position is
-   * within FOUNDATION_SNAP_RADIUS of it, otherwise returns null.
-   */
+  /** Returns the foundation slot angle for the given position, or null if not a slot */
   private getFoundationAngle(x: number, z: number): number | null {
     if (!this.foundationArea) return null
     for (const slot of this.foundationArea.slots) {
@@ -271,10 +259,78 @@ export class NertzGame {
   }
 
   /**
-   * Applies saved `x`/`z` positions from `initialCardPositions` to a freshly-built deck.
-   * Cards with a saved position are made visible and flipped face-down (rotation.z = π).
-   * @returns true if at least one card had a saved position
+   * Refreshes all local pile visuals from `localPileState`.
+   * Called after every confirmed action to keep rendering in sync.
+   *
+   * - Work piles: fanned toward table center so all cards are visible
+   * - Nertz pile: top card face-up, rest face-down
+   * - Waste pile: all face-up (stacked)
+   * - Stock pile: all face-down (stacked)
+   * - Camera: zooms out as work piles grow
    */
+  private refreshLocalDisplay(): void {
+    if (!this.localPileState || !this.localDeck || !this.localPilePositions || !this.localSeat)
+      return
+
+    // Fan direction: toward table center (negative radial) — plenty of space, no seat clipping
+    const fanDirX = -Math.sin(this.localSeat.angle)
+    const fanDirZ = -Math.cos(this.localSeat.angle)
+
+    // Nertz pile: all face-down except the top card
+    const nertzBase = this.localPilePositions[PILE_NERTZ]
+    const nertzTop = this.localPileState.nertzPile[this.localPileState.nertzPile.length - 1]
+    this.localPileState.nertzPile.forEach((cardId, i) => {
+      const card = this.localDeck!.cards.find((c) => c.id === cardId)
+      if (!card) return
+      card.object.position.set(nertzBase.x, CARD_Y_OFFSET + i * 0.0005, nertzBase.z)
+      card.object.rotation.z = cardId === nertzTop ? 0 : Math.PI
+    })
+
+    // Work piles: fanned face-up toward center; each card offset by WORK_PILE_FAN_OFFSET
+    for (let wi = 0; wi < 4; wi++) {
+      const pile = this.localPileState.workPiles[wi]
+      const basePos = this.localPilePositions[PILE_WORK_START + wi]
+      pile.forEach((cardId, i) => {
+        const card = this.localDeck!.cards.find((c) => c.id === cardId)
+        if (!card) return
+        card.object.visible = true
+        card.object.position.set(
+          basePos.x + i * WORK_PILE_FAN_OFFSET * fanDirX,
+          CARD_Y_OFFSET + i * 0.002,
+          basePos.z + i * WORK_PILE_FAN_OFFSET * fanDirZ
+        )
+        card.object.rotation.z = 0 // all work pile cards face-up
+      })
+    }
+
+    // Waste pile: all face-up, stacked
+    const wasteBase = this.localPilePositions[PILE_WASTE]
+    this.localPileState.waste.forEach((cardId, i) => {
+      const card = this.localDeck!.cards.find((c) => c.id === cardId)
+      if (!card) return
+      card.object.visible = true
+      card.object.position.set(wasteBase.x, CARD_Y_OFFSET + i * 0.0005, wasteBase.z)
+      card.object.rotation.z = 0 // face-up
+    })
+
+    // Stock pile: all face-down, stacked
+    const stockBase = this.localPilePositions[PILE_STOCK]
+    this.localPileState.stock.forEach((cardId, i) => {
+      const card = this.localDeck!.cards.find((c) => c.id === cardId)
+      if (!card) return
+      card.object.position.set(stockBase.x, CARD_Y_OFFSET + i * 0.0005, stockBase.z)
+      card.object.rotation.z = Math.PI // face-down
+    })
+
+    // Camera: zoom out as work piles grow (0.5 units per card beyond depth 3)
+    const maxDepth = Math.max(...this.localPileState.workPiles.map((p) => p.length))
+    const extraHeight = Math.max(0, maxDepth - 3) * 0.5
+    this.camera.position.y = Math.min(INTRO_CAMERA_HEIGHT + extraHeight, 22)
+
+    this.updateDraggableCards()
+    this.registerWorkPilesWithDragControls()
+  }
+
   private applyInitialPositions(deck: PlayerDeck): boolean {
     if (!this.initialCardPositions) return false
     let applied = false
@@ -294,9 +350,8 @@ export class NertzGame {
   }
 
   /**
-   * Applies a batch of card positions to all decks in the scene.
-   * Used for reconnect state restore and when other players broadcast their initial layout.
-   * Cards with a matching saved position are made visible, moved, and flipped face-down.
+   * Applies a batch of card positions to all decks.
+   * Used for reconnect state restore and other-player position broadcasts.
    */
   applyState(positions: Record<string, { x: number; z: number }>): void {
     for (const deck of this.playerDecks) {
@@ -314,10 +369,7 @@ export class NertzGame {
     }
   }
 
-  /**
-   * Applies a game action received from another player via the server.
-   * Currently handles 'move-card': moves the identified card to the given position.
-   */
+  /** Handles the legacy `move-card` broadcast from remote players */
   applyRemoteAction(action: {
     type: string
     cardId: string
@@ -332,7 +384,204 @@ export class NertzGame {
     if (foundationAngle !== null) card.object.rotation.y = foundationAngle
   }
 
-  /** Keeps the renderer and camera aspect ratio in sync with the container size */
+  /**
+   * Handles the server's response to a typed game action.
+   * On success: updates local pile state then refreshes all display.
+   * On failure: snaps the card back to its pre-drag position.
+   */
+  applyActionResult(result: ActionResult): void {
+    const action = this.pendingAction
+    this.pendingAction = null
+
+    if (!result.ok) {
+      this.dragControls.snapBackCard(result.cardId)
+      return
+    }
+
+    if (!action || !this.localPileState) return
+
+    if (action.type === "play-to-foundation" || action.type === "play-to-work-pile") {
+      this.removeFromLocalPile(action.source, action.sourceIndex, action.cardId)
+      if (action.type === "play-to-work-pile") {
+        this.localPileState.workPiles[action.targetPileIndex].push(action.cardId)
+      }
+    } else if (action.type === "flip-stock") {
+      if (this.localPileState.stock.length === 0) {
+        // Stock exhausted — cycle waste back to stock face-down
+        this.localPileState.stock = [...this.localPileState.waste].reverse()
+        this.localPileState.waste = []
+      } else {
+        const count = Math.min(3, this.localPileState.stock.length)
+        const flipped = this.localPileState.stock.splice(-count)
+        this.localPileState.waste.push(...flipped)
+      }
+    }
+
+    this.refreshLocalDisplay()
+  }
+
+  /**
+   * Emits a flip-stock action to the server.
+   * Called by the Flip Stock button in the UI.
+   */
+  flipStock(): void {
+    if (!this.localPileState) return
+    const action: GameAction = { type: "flip-stock" }
+    this.pendingAction = action
+    socket.emit("game-action", action)
+  }
+
+  // ---------------------------------------------------------------------------
+  // Private: action routing
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Routes a card drop to the correct typed action.
+   * Cards dropped outside a valid target (foundation or work pile) snap back — there are
+   * no free moves; every play must land on a legal target.
+   */
+  private handleCardDrop(
+    cardId: string,
+    position: { x: number; z: number },
+    foundationSlotIndex: number | null,
+    workPileIndex: number | null
+  ): void {
+    if (foundationSlotIndex !== null) {
+      const source = this.findCardSource(cardId)
+      if (!source) {
+        this.dragControls.snapBackCard(cardId)
+        return
+      }
+      const action: GameAction = {
+        type: "play-to-foundation",
+        cardId,
+        slotIndex: foundationSlotIndex,
+        source: source.pileType,
+        ...(source.pileIndex !== undefined ? { sourceIndex: source.pileIndex } : {}),
+      }
+      this.pendingAction = action
+      socket.emit("game-action", action)
+      return
+    }
+
+    if (workPileIndex !== null) {
+      const source = this.findCardSource(cardId)
+      if (!source) {
+        this.dragControls.snapBackCard(cardId)
+        return
+      }
+      const action: GameAction = {
+        type: "play-to-work-pile",
+        cardId,
+        targetPileIndex: workPileIndex,
+        source: source.pileType,
+        ...(source.pileIndex !== undefined ? { sourceIndex: source.pileIndex } : {}),
+      }
+      this.pendingAction = action
+      socket.emit("game-action", action)
+      return
+    }
+
+    // No valid target — snap back to source position
+    this.dragControls.snapBackCard(cardId)
+  }
+
+  /**
+   * Finds the source pile for a card by checking if it is the TOP of any local pile.
+   * Returns null for buried cards or when pile state is unknown.
+   */
+  private findCardSource(
+    cardId: string
+  ): { pileType: "nertz" | "work" | "waste"; pileIndex?: number } | null {
+    if (!this.localPileState) return null
+    const { nertzPile, workPiles, waste } = this.localPileState
+
+    if (nertzPile[nertzPile.length - 1] === cardId) return { pileType: "nertz" }
+    for (let i = 0; i < 4; i++) {
+      if (workPiles[i][workPiles[i].length - 1] === cardId) {
+        return { pileType: "work", pileIndex: i }
+      }
+    }
+    if (waste[waste.length - 1] === cardId) return { pileType: "waste" }
+    return null
+  }
+
+  /** Removes the top card of the given source pile from localPileState */
+  private removeFromLocalPile(
+    source: "nertz" | "work" | "waste",
+    sourceIndex: number | undefined,
+    _cardId: string
+  ): void {
+    if (!this.localPileState) return
+    if (source === "nertz") {
+      this.localPileState.nertzPile.pop()
+    } else if (source === "waste") {
+      this.localPileState.waste.pop()
+    } else if (source === "work" && sourceIndex !== undefined) {
+      this.localPileState.workPiles[sourceIndex].pop()
+    }
+  }
+
+  /**
+   * Restricts the draggable card set to the top card of each playable pile.
+   * Stock cards are never draggable — flip them via the Flip Stock button.
+   */
+  private updateDraggableCards(): void {
+    if (!this.localPileState || !this.localDeck) return
+    const { nertzPile, workPiles, waste } = this.localPileState
+    const draggable: Card[] = []
+
+    const addTop = (pile: string[]) => {
+      const topId = pile[pile.length - 1]
+      if (!topId) return
+      const card = this.localDeck!.cards.find((c) => c.id === topId)
+      if (card) draggable.push(card)
+    }
+
+    addTop(nertzPile)
+    for (const pile of workPiles) addTop(pile)
+    addTop(waste)
+
+    this.dragControls.setCards(draggable)
+  }
+
+  /**
+   * Updates work pile snap targets based on current pile depth.
+   * The snap target for each pile is where the NEXT card will land (one above current top).
+   */
+  private registerWorkPilesWithDragControls(): void {
+    if (!this.localPilePositions || !this.localSeat) return
+    const workPiles =
+      this.localPileState?.workPiles ??
+      ([[], [], [], []] as [string[], string[], string[], string[]])
+    const fanDirX = -Math.sin(this.localSeat.angle)
+    const fanDirZ = -Math.cos(this.localSeat.angle)
+
+    const slots = []
+    for (let i = 0; i < 4; i++) {
+      const basePos = this.localPilePositions[PILE_WORK_START + i]
+      const pileLen = workPiles[i].length
+      // Snap target = position where the next card will be placed
+      slots.push({
+        x: basePos.x + pileLen * WORK_PILE_FAN_OFFSET * fanDirX,
+        z: basePos.z + pileLen * WORK_PILE_FAN_OFFSET * fanDirZ,
+        index: i,
+      })
+    }
+    this.dragControls.setWorkPileSlots(slots)
+  }
+
+  /** Registers the stock pile position with DragControls for click-to-flip detection */
+  private registerStockWithDragControls(): void {
+    if (!this.localPilePositions) return
+    const stockPos = this.localPilePositions[PILE_STOCK]
+    this.dragControls.setStockPile(stockPos, () => this.flipStock())
+  }
+
+  // ---------------------------------------------------------------------------
+  // Render loop
+  // ---------------------------------------------------------------------------
+
   private onResize = () => {
     const { clientWidth: width, clientHeight: height } = this.container
     this.renderer.setSize(width, height)
@@ -340,7 +589,6 @@ export class NertzGame {
     this.camera.updateProjectionMatrix()
   }
 
-  /** Per-frame update: advances animations and renders the scene */
   private update() {
     const now = performance.now()
     const deltaTime = Math.min((now - this.lastTime) / 1000, MAX_DELTA_TIME)
@@ -349,24 +597,41 @@ export class NertzGame {
 
     if (this.shuffle && !this.shuffle.isComplete) {
       this.shuffle.update(deltaTime)
-      // Kick off the deal animation once shuffling is done
       if (this.shuffle.isComplete) {
-        const piles = this.localSeat ? this.computeDealPiles(this.localSeat) : []
+        const piles = this.localSeat
+          ? computeDealPiles(this.localSeat, SEAT_RADIUS, PILE_OFFSET)
+          : []
         this.intro = new IntroAnimation(this.shuffle.shuffledCards, this.camera, piles)
       }
     } else if (this.intro && !this.intro.isComplete) {
       this.intro.update(deltaTime)
-      // Once the deal finishes: enable drag for local player's cards and save pile positions
       if (this.intro.isComplete) {
         const localDeck = this.playerDecks[this.localPlayerIndex]
-        if (localDeck) {
-          this.dragControls.setCards(localDeck.cards)
-          // Bulk-save the dealt pile positions so reconnecting players skip the intro
+        if (localDeck && this.localSeat) {
+          this.localPilePositions = computeDealPiles(this.localSeat, SEAT_RADIUS, PILE_OFFSET)
+
+          // Build ordered pile state from the deal animation card order:
+          //   cards[0..12]  → nertz pile (0=bottom, 12=top)
+          //   cards[13..16] → work piles 1–4 (one card each, face-up)
+          //   cards[17..51] → stock pile (17=bottom, 51=top, face-down)
+          //   waste starts empty at index 5
+          const dealt = this.intro.dealtCards
+          this.localPileState = {
+            nertzPile: dealt.slice(0, 13).map((c) => c.id),
+            workPiles: [[dealt[13].id], [dealt[14].id], [dealt[15].id], [dealt[16].id]],
+            stock: dealt.slice(17).map((c) => c.id),
+            waste: [],
+          }
+
+          this.updateDraggableCards()
+          this.registerWorkPilesWithDragControls()
+          this.registerStockWithDragControls()
+
           const positions: Record<string, { x: number; z: number }> = {}
           for (const card of localDeck.cards) {
             positions[card.id] = { x: card.object.position.x, z: card.object.position.z }
           }
-          socket.emit("set-state", positions)
+          socket.emit("set-state", { positions, pileState: this.localPileState })
         }
       }
     }
@@ -374,7 +639,6 @@ export class NertzGame {
     this.renderer.render(this.scene, this.camera)
   }
 
-  /** Stops the render loop, removes event listeners, and disposes the renderer */
   destroy() {
     this.renderer.setAnimationLoop(null)
     window.removeEventListener("resize", this.onResize)

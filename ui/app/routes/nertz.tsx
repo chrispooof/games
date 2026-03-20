@@ -5,6 +5,7 @@ import { PLAYER_BACK_COLORS } from "~/games/nertz/src/world/player-deck"
 import NertzWelcome from "~/screens/nertz/welcome"
 import { socket } from "~/lib/socket"
 import { getPlayerId } from "~/lib/player-id"
+import type { ActionResult } from "~/games/nertz/src/types/actions"
 
 export const meta: Route.MetaFunction = () => {
   return [{ title: "Nertz" }, { name: "description", content: "Nertz game" }]
@@ -120,6 +121,11 @@ export default function NertzRoute() {
       gameRef.current?.applyRemoteAction(action)
     }
 
+    /** Server response to the local player's typed action (foundation/work-pile play) */
+    const onActionResult = (result: ActionResult) => {
+      gameRef.current?.applyActionResult(result)
+    }
+
     /** Applies saved card positions — used on socket reconnect and when other players
      *  finish their intro and broadcast their initial pile layout */
     const onRoomState = ({ gameState }: { gameState: GameState | null }) => {
@@ -136,14 +142,25 @@ export default function NertzRoute() {
       gameRef.current?.applyState(cardPositions)
     }
 
+    const onGameOver = ({ winnerId }: { winnerId: string }) => {
+      const winnerIndex = players.findIndex((id) => id === winnerId)
+      const color =
+        winnerIndex >= 0
+          ? `#${PLAYER_BACK_COLORS[winnerIndex % PLAYER_BACK_COLORS.length].toString(16).padStart(6, "0")}`
+          : "#ffffff"
+      setNotification({ message: `Player ${winnerIndex + 1} wins! 🎉`, color })
+    }
+
     socket.on("connect", onConnect)
     socket.on("player-joined", onPlayerJoined)
     socket.on("player-reconnected", onPlayerReconnected)
     socket.on("player-disconnected", onPlayerDisconnected)
     socket.on("player-left", onPlayerLeft)
     socket.on("game-action", onGameAction)
+    socket.on("action-result", onActionResult)
     socket.on("room-state", onRoomState)
     socket.on("game-state-update", onGameStateUpdate)
+    socket.on("game-over", onGameOver)
 
     return () => {
       socket.off("connect", onConnect)
@@ -152,8 +169,10 @@ export default function NertzRoute() {
       socket.off("player-disconnected", onPlayerDisconnected)
       socket.off("player-left", onPlayerLeft)
       socket.off("game-action", onGameAction)
+      socket.off("action-result", onActionResult)
       socket.off("room-state", onRoomState)
       socket.off("game-state-update", onGameStateUpdate)
+      socket.off("game-over", onGameOver)
     }
   }, [scene])
 
@@ -212,6 +231,14 @@ export default function NertzRoute() {
         <p className="text-white/50 text-xs uppercase tracking-widest font-medium">Room Code</p>
         <p className="text-white text-2xl font-black tracking-widest">{scene.roomCode}</p>
       </div>
+      {/* Flip Stock button — click to flip 3 cards from stock to waste */}
+      <button
+        className="absolute bottom-4 right-4 z-10 px-5 py-2 rounded-lg bg-black/70 backdrop-blur-sm border border-white/10 text-white text-sm font-semibold select-none hover:bg-white/10 active:scale-95 transition-all"
+        onClick={() => gameRef.current?.flipStock()}
+      >
+        Flip Stock
+      </button>
+
       <div ref={containerRef} className="absolute inset-0" />
     </div>
   )

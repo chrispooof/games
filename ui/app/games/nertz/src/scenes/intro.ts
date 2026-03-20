@@ -48,6 +48,15 @@ export class IntroAnimation {
   isComplete = false
 
   /**
+   * Cards in the order they were dealt: indices 0–12 → Nertz pile (0=bottom, 12=top),
+   * 13–16 → Work piles 1–4, 17–51 → Stock pile (17=bottom, 51=top).
+   * Safe to read after `isComplete` is true.
+   */
+  get dealtCards(): Card[] {
+    return this.cards
+  }
+
+  /**
    * @param cards - Shuffled 52-card deck in deal order
    * @param camera - Scene camera, zoomed out during the sequence
    * @param piles - Six world-space positions: [Nertz, Work1, Work2, Work3, Work4, Stock]
@@ -85,7 +94,7 @@ export class IntroAnimation {
         const workIdx = i - NERTZ_PILE_SIZE + 1 // pile index 1–4
         return { targetX: piles[workIdx].x, targetZ: piles[workIdx].z, faceUp: true }
       }
-      return { targetX: piles[5].x, targetZ: piles[5].z, faceUp: false }
+      return { targetX: piles[6].x, targetZ: piles[6].z, faceUp: false }
     })
   }
 
