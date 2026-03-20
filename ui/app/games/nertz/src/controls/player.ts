@@ -1,6 +1,7 @@
 import * as THREE from "three"
 import { Card } from "../../../shared/types/deck"
-import { CARD_DRAG_Y, CARD_Y_OFFSET } from "../utils/constants"
+import { CARD_DRAG_Y, CARD_Y_OFFSET, FOUNDATION_SNAP_RADIUS } from "../utils/constants"
+import type { FoundationSlot } from "../world/foundations"
 
 /**
  * Handles drag-and-drop interaction for cards in the 3D scene.
@@ -21,6 +22,9 @@ export class DragControls {
   private dragPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -CARD_DRAG_Y)
 
   private dragging: Card | null = null
+
+  /** Foundation slot positions used to snap dropped cards */
+  private foundationSlots: FoundationSlot[] = []
 
   /** Offset from the card's origin to the initial pick point — prevents snapping on grab */
   private dragOffset = new THREE.Vector3()
@@ -59,6 +63,11 @@ export class DragControls {
   /** Replaces the card list used for raycasting and dragging */
   setCards(cards: Card[]): void {
     this.cards = cards
+  }
+
+  /** Updates the foundation snap targets used when a card is dropped */
+  setFoundationSlots(slots: FoundationSlot[]): void {
+    this.foundationSlots = slots
   }
 
   /** Removes all mouse listeners from the canvas */
@@ -143,14 +152,33 @@ export class DragControls {
   private onMouseUp = () => {
     if (!this.dragging) return
 
+    // Snap to the nearest foundation slot if dropped within FOUNDATION_SNAP_RADIUS
+    let px = this.dragging.object.position.x
+    let pz = this.dragging.object.position.z
+    let nearestDist = FOUNDATION_SNAP_RADIUS
+    let snapAngle: number | null = null
+
+    for (const slot of this.foundationSlots) {
+      const dist = Math.sqrt((px - slot.x) ** 2 + (pz - slot.z) ** 2)
+      if (dist < nearestDist) {
+        nearestDist = dist
+        px = slot.x
+        pz = slot.z
+        snapAngle = slot.angle
+      }
+    }
+
+    this.dragging.object.position.x = px
+    this.dragging.object.position.z = pz
+    if (snapAngle !== null) {
+      this.dragging.object.rotation.y = snapAngle
+    }
+
     // Settle the card back onto the table surface
     this.dragging.object.position.y = CARD_Y_OFFSET
 
     // Notify the game of the final card position so it can be broadcast
-    this.onCardDrop?.(this.dragging.id, {
-      x: this.dragging.object.position.x,
-      z: this.dragging.object.position.z,
-    })
+    this.onCardDrop?.(this.dragging.id, { x: px, z: pz })
 
     this.dragging = null
   }

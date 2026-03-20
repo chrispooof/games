@@ -1,4 +1,6 @@
 /** Card grid layout — sized to match GLB card dimensions (0.63 x 0.88) */
+export const CARD_WIDTH = 0.63
+export const CARD_DEPTH = 0.88
 export const COLS = 13
 export const COL_GAP = 0.75
 export const ROW_GAP = 1.05
@@ -19,16 +21,19 @@ export const SCENE_BACKGROUND_COLOR = 0x1a472a
 export const CAMERA_FOV = 60
 
 /** Top-down camera height above the table before the intro zoom (close-up view) */
-export const CAMERA_HEIGHT = 9
+export const CAMERA_HEIGHT = 13
 
 /** Camera height after the intro zoom-out completes (full table view) */
 export const INTRO_CAMERA_HEIGHT = 12
 
 /** Distance from the table center to each player's seat (world units) */
-export const SEAT_RADIUS = 4.5
+export const SEAT_RADIUS = 6.5
 
 /** Distance beyond the seat center where each player's dealt pile lands (world units) */
 export const PILE_OFFSET = 1
+
+/** Snap radius for foundation slots — cards dropped within this distance snap to the slot center */
+export const FOUNDATION_SNAP_RADIUS = 0.35
 
 /** Directional (key) light color and intensity */
 export const DIR_LIGHT_COLOR = 0xfff5e0

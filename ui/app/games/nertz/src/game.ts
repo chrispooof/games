@@ -3,6 +3,7 @@ import * as THREE from "three"
 import { socket } from "~/lib/socket"
 import deckUrl from "~/assets/deck.glb?url"
 import { Table } from "./world/terrain"
+import { FoundationArea } from "./world/foundations"
 import { PlayerDeck, type Seat } from "./world/player-deck"
 import { DragControls } from "./controls/player"
 import { ShuffleAnimation } from "./scenes/shuffle"
@@ -43,6 +44,7 @@ export class NertzGame {
   private playerDecks: PlayerDeck[] = []
   private deckGlbScene: THREE.Object3D | null = null
   private table: Table | null = null
+  private foundationArea: FoundationArea | null = null
   private dragControls!: DragControls
   private shuffle: ShuffleAnimation | null = null
   private intro: IntroAnimation | null = null
@@ -92,6 +94,8 @@ export class NertzGame {
     this.loader = new GLTFLoader()
     this.addLights()
     this.refreshTable()
+    this.foundationArea = new FoundationArea(maxPlayers)
+    this.scene.add(this.foundationArea)
     this.dragControls = new DragControls(
       this.camera,
       this.renderer.domElement,
@@ -100,6 +104,7 @@ export class NertzGame {
         socket.emit("game-action", { type: "move-card", cardId, position })
       }
     )
+    this.dragControls.setFoundationSlots(this.foundationArea.slots)
     this.loadDeck()
     this.init()
   }
@@ -221,6 +226,19 @@ export class NertzGame {
   }
 
   /**
+   * Returns the Y-rotation angle of the nearest foundation slot if the given position is
+   * within FOUNDATION_SNAP_RADIUS of it, otherwise returns null.
+   */
+  private getFoundationAngle(x: number, z: number): number | null {
+    if (!this.foundationArea) return null
+    for (const slot of this.foundationArea.slots) {
+      const dist = Math.sqrt((x - slot.x) ** 2 + (z - slot.z) ** 2)
+      if (dist < 0.01) return slot.angle
+    }
+    return null
+  }
+
+  /**
    * Applies saved `x`/`z` positions from `initialCardPositions` to a freshly-built deck.
    * Cards with a saved position are made visible and flipped face-down (rotation.z = π).
    * @returns true if at least one card had a saved position
@@ -235,6 +253,8 @@ export class NertzGame {
         card.object.position.x = pos.x
         card.object.position.z = pos.z
         card.object.rotation.z = Math.PI // face-down, matching post-intro state
+        const foundationAngle = this.getFoundationAngle(pos.x, pos.z)
+        if (foundationAngle !== null) card.object.rotation.y = foundationAngle
         applied = true
       }
     }
@@ -255,6 +275,8 @@ export class NertzGame {
           card.object.position.x = pos.x
           card.object.position.z = pos.z
           card.object.rotation.z = Math.PI // face-down
+          const foundationAngle = this.getFoundationAngle(pos.x, pos.z)
+          if (foundationAngle !== null) card.object.rotation.y = foundationAngle
         }
       }
     }
@@ -274,6 +296,8 @@ export class NertzGame {
     if (!card) return
     card.object.position.x = action.position.x
     card.object.position.z = action.position.z
+    const foundationAngle = this.getFoundationAngle(action.position.x, action.position.z)
+    if (foundationAngle !== null) card.object.rotation.y = foundationAngle
   }
 
   /** Keeps the renderer and camera aspect ratio in sync with the container size */
