@@ -56,9 +56,8 @@ export class NertzGame {
   private initialDeckCount: number
   /** Which deck index belongs to the local player (runs the intro animation) */
   private localPlayerIndex: number
-  /** World-space pile position for the local player's dealt cards */
-  private localPileX = 0
-  private localPileZ = 0
+  /** Seat transform for the local player — used to compute deal pile positions */
+  private localSeat: Seat | null = null
   /** Saved card positions from the server — used to skip intro and restore state */
   private initialCardPositions: Record<string, { x: number; z: number }> | null
 
@@ -197,13 +196,8 @@ export class NertzGame {
     deck.buildFromGLB(this.deckGlbScene, this.scene, seat)
     this.playerDecks.push(deck)
 
-    // Pile lands slightly closer to table center than the seat grid
-    const pileX = Math.sin(seat.angle) * (SEAT_RADIUS - PILE_OFFSET)
-    const pileZ = Math.cos(seat.angle) * (SEAT_RADIUS - PILE_OFFSET)
-
     if (isLocalPlayer) {
-      this.localPileX = pileX
-      this.localPileZ = pileZ
+      this.localSeat = seat
       const hasPositions = this.applyInitialPositions(deck)
       if (hasPositions) {
         // Resuming an existing game: skip the intro, zoom the camera out, and re-enable drag
@@ -223,6 +217,44 @@ export class NertzGame {
         }
       }
     }
+  }
+
+  /**
+   * Computes the six world-space pile positions for a player's dealt hand.
+   * Piles are arranged in a row perpendicular to the radial direction, just in front of the seat:
+   *   [Nertz, Work1, Work2, Work3, Work4, Stock]
+   */
+  private computeDealPiles(seat: Seat): Array<{ x: number; z: number }> {
+    const r = SEAT_RADIUS - PILE_OFFSET
+    const cx = Math.sin(seat.angle) * r
+    const cz = Math.cos(seat.angle) * r
+    // Perpendicular direction for spreading the row of piles
+    const perpX = Math.cos(seat.angle)
+    const perpZ = -Math.sin(seat.angle)
+    const spacing = 0.85
+
+    return Array.from({ length: 6 }, (_, i) => {
+      const offset = (i - 2.5) * spacing
+      return { x: cx + perpX * offset, z: cz + perpZ * offset }
+    })
+  }
+
+  /**
+   * Returns the correct rotation.z for a card being restored from saved state.
+   * Cards at work pile positions (piles 1–4) for their owning player are face-up (0);
+   * everything else is face-down (π).
+   * Card IDs are prefixed with `p{index}_` so we can derive the owning player's seat.
+   */
+  private getFaceRotation(cardId: string, x: number, z: number): number {
+    const match = cardId.match(/^p(\d+)_/)
+    if (!match) return Math.PI
+    const seat = this.computeSeat(parseInt(match[1]), this.maxPlayers)
+    const piles = this.computeDealPiles(seat)
+    // Pile 0 is the Nertz pile (top card face-up); piles 1–4 are work piles (face-up)
+    for (let i = 0; i <= 4; i++) {
+      if (Math.abs(x - piles[i].x) < 0.01 && Math.abs(z - piles[i].z) < 0.01) return 0
+    }
+    return Math.PI
   }
 
   /**
@@ -252,7 +284,7 @@ export class NertzGame {
         card.object.visible = true
         card.object.position.x = pos.x
         card.object.position.z = pos.z
-        card.object.rotation.z = Math.PI // face-down, matching post-intro state
+        card.object.rotation.z = this.getFaceRotation(card.id, pos.x, pos.z)
         const foundationAngle = this.getFoundationAngle(pos.x, pos.z)
         if (foundationAngle !== null) card.object.rotation.y = foundationAngle
         applied = true
@@ -274,7 +306,7 @@ export class NertzGame {
           card.object.visible = true
           card.object.position.x = pos.x
           card.object.position.z = pos.z
-          card.object.rotation.z = Math.PI // face-down
+          card.object.rotation.z = this.getFaceRotation(card.id, pos.x, pos.z)
           const foundationAngle = this.getFoundationAngle(pos.x, pos.z)
           if (foundationAngle !== null) card.object.rotation.y = foundationAngle
         }
@@ -319,12 +351,8 @@ export class NertzGame {
       this.shuffle.update(deltaTime)
       // Kick off the deal animation once shuffling is done
       if (this.shuffle.isComplete) {
-        this.intro = new IntroAnimation(
-          this.shuffle.shuffledCards,
-          this.camera,
-          this.localPileX,
-          this.localPileZ
-        )
+        const piles = this.localSeat ? this.computeDealPiles(this.localSeat) : []
+        this.intro = new IntroAnimation(this.shuffle.shuffledCards, this.camera, piles)
       }
     } else if (this.intro && !this.intro.isComplete) {
       this.intro.update(deltaTime)
