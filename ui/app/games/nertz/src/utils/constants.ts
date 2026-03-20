@@ -18,8 +18,11 @@ export const SCENE_BACKGROUND_COLOR = 0x1a472a
 /** Camera field of view (degrees) */
 export const CAMERA_FOV = 60
 
-/** Top-down camera height above the table (high enough to see all seated players) */
+/** Top-down camera height above the table before the intro zoom (close-up view) */
 export const CAMERA_HEIGHT = 9
+
+/** Camera height after the intro zoom-out completes (full table view) */
+export const INTRO_CAMERA_HEIGHT = 12
 
 /** Distance from the table center to each player's seat (world units) */
 export const SEAT_RADIUS = 3

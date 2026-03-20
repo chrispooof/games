@@ -1,9 +1,6 @@
 import * as THREE from "three"
 import type { Card } from "../../../shared/types/deck"
-import { CAMERA_HEIGHT, CARD_Y_OFFSET } from "../utils/constants"
-
-/** Camera height the scene zooms out to during the deal */
-const INTRO_CAMERA_HEIGHT = 12
+import { CAMERA_HEIGHT, CARD_Y_OFFSET, INTRO_CAMERA_HEIGHT } from "../utils/constants"
 
 /** Seconds each card takes to travel from grid to pile */
 const CARD_DEAL_DURATION = 0.1

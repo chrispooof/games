@@ -12,6 +12,7 @@ import {
   AMBIENT_LIGHT_INTENSITY,
   CAMERA_FOV,
   CAMERA_HEIGHT,
+  INTRO_CAMERA_HEIGHT,
   DIR_LIGHT_COLOR,
   DIR_LIGHT_HEIGHT,
   DIR_LIGHT_INTENSITY,
@@ -200,7 +201,8 @@ export class NertzGame {
       this.localPileZ = pileZ
       const hasPositions = this.applyInitialPositions(deck)
       if (hasPositions) {
-        // Resuming an existing game: skip the intro and re-enable drag immediately
+        // Resuming an existing game: skip the intro, zoom the camera out, and re-enable drag
+        this.camera.position.y = INTRO_CAMERA_HEIGHT
         this.dragControls.setCards(deck.cards)
       } else {
         // Fresh game: run the full shuffle → deal intro sequence
