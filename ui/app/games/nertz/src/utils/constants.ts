@@ -25,7 +25,7 @@ export const CAMERA_HEIGHT = 9
 export const INTRO_CAMERA_HEIGHT = 12
 
 /** Distance from the table center to each player's seat (world units) */
-export const SEAT_RADIUS = 3
+export const SEAT_RADIUS = 4.5
 
 /** Distance beyond the seat center where each player's dealt pile lands (world units) */
 export const PILE_OFFSET = 1

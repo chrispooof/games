@@ -78,9 +78,7 @@ export class PlayerDeck {
       const { suit, rank, value } = parseCardConfig(name)
       // Prefix with player index so every card has a scene-wide unique ID
       const cardId = `p${this.playerIndex}_${name}`
-      const card = new Card(cardId, suit, rank, value, true, cloned, () =>
-        console.log("Card clicked:", cardId)
-      )
+      const card = new Card(cardId, suit, rank, value, true, cloned)
       this.cards.push(card)
 
       // Local grid offset (card position relative to seat center)
