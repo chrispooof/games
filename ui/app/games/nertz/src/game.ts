@@ -105,6 +105,23 @@ export class NertzGame {
   /** In-flight typed action awaiting an `action-result` response */
   private pendingAction: GameAction | null = null
 
+  // ---------------------------------------------------------------------------
+  // Magnifier (picture-in-picture zoom view)
+  // ---------------------------------------------------------------------------
+
+  /** Orthographic camera that renders the zoomed view in the bottom-left corner */
+  private magnifierCamera: THREE.OrthographicCamera | null = null
+  /** DOM overlay providing the border frame for the magnifier */
+  private magnifierEl: HTMLDivElement | null = null
+  /** World-space XZ position under the mouse cursor — updated every mousemove */
+  private mouseWorldPos = { x: 0, z: 0 }
+  /** Reusable raycaster for mouse-to-world projection in the magnifier */
+  private readonly magRaycaster = new THREE.Raycaster()
+  private readonly magPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0)
+  private readonly magTarget = new THREE.Vector3()
+  /** Side length of the magnifier viewport in CSS pixels */
+  private readonly MINI_PX = 240
+
   /**
    * @param container - The DOM element that will host the WebGL canvas
    * @param maxPlayers - Total seat count; governs seat angle spacing
@@ -172,7 +189,52 @@ export class NertzGame {
     this.renderer.setSize(this.container.clientWidth, this.container.clientHeight)
     this.renderer.setPixelRatio(window.devicePixelRatio)
     this.renderer.shadowMap.enabled = true
+    this.renderer.autoClear = false
+    this.setupMagnifier()
+    this.renderer.domElement.addEventListener("mousemove", this.onMouseMoveGlobal)
     this.renderer.setAnimationLoop(() => this.update())
+  }
+
+  /**
+   * Creates the magnifier DOM frame and orthographic camera.
+   * The WebGL viewport renders content inside the frame; the DOM element provides styling.
+   */
+  private setupMagnifier(): void {
+    const size = this.MINI_PX
+    const el = document.createElement("div")
+    el.style.cssText =
+      `position:absolute;bottom:10px;left:10px;width:${size}px;height:${size}px;` +
+      `border-radius:8px;border:2px solid rgba(255,255,255,0.35);` +
+      `box-shadow:0 4px 14px rgba(0,0,0,0.65);pointer-events:none;overflow:hidden;`
+    const label = document.createElement("div")
+    label.style.cssText =
+      "position:absolute;bottom:4px;right:6px;" +
+      "color:rgba(255,255,255,0.45);font-size:10px;font-family:monospace;user-select:none;"
+    label.textContent = "zoom"
+    el.appendChild(label)
+    this.container.style.position = "relative"
+    this.container.appendChild(el)
+    this.magnifierEl = el
+
+    // Orthographic camera: extent ±0.5 world units → shows a 1.0×1.0 area (~1.5 cards wide)
+    const ext = 0.5
+    this.magnifierCamera = new THREE.OrthographicCamera(-ext, ext, ext, -ext, 0.1, 20)
+  }
+
+  /**
+   * Tracks the world-space XZ position under the cursor so the magnifier can follow it.
+   * Raycasts against the table plane (y = 0).
+   */
+  private onMouseMoveGlobal = (event: MouseEvent) => {
+    const rect = this.renderer.domElement.getBoundingClientRect()
+    const ndc = new THREE.Vector2(
+      ((event.clientX - rect.left) / rect.width) * 2 - 1,
+      -((event.clientY - rect.top) / rect.height) * 2 + 1
+    )
+    this.magRaycaster.setFromCamera(ndc, this.camera)
+    if (this.magRaycaster.ray.intersectPlane(this.magPlane, this.magTarget)) {
+      this.mouseWorldPos = { x: this.magTarget.x, z: this.magTarget.z }
+    }
   }
 
   /** Adds a directional key light and ambient fill light to the scene */
@@ -312,13 +374,19 @@ export class NertzGame {
     const fanDirX = Math.sin(this.localSeat.angle)
     const fanDirZ = Math.cos(this.localSeat.angle)
 
-    // Nertz pile: all face-down except the top card
+    // Nertz pile: all face-down except the top card.
+    // Each card is staggered slightly toward the player (fanDir) so the stack
+    // looks visibly thicker as more cards remain — you can see card edges from above.
     const nertzBase = this.localPilePositions[PILE_NERTZ]
     const nertzTop = this.localPileState.nertzPile[this.localPileState.nertzPile.length - 1]
     this.localPileState.nertzPile.forEach((cardId, i) => {
       const card = this.localDeck!.cards.find((c) => c.id === cardId)
       if (!card) return
-      card.object.position.set(nertzBase.x, CARD_Y_OFFSET + i * 0.0005, nertzBase.z)
+      card.object.position.set(
+        nertzBase.x + i * 0.005 * fanDirX,
+        CARD_Y_OFFSET + i * 0.004,
+        nertzBase.z + i * 0.005 * fanDirZ
+      )
       card.object.rotation.z = cardId === nertzTop ? 0 : Math.PI
     })
 
@@ -339,22 +407,32 @@ export class NertzGame {
       })
     }
 
-    // Waste pile: all face-up, stacked
+    // Waste pile: all face-up, stacked with a mild stagger so it looks like
+    // an actual discard pile rather than a single card.
     const wasteBase = this.localPilePositions[PILE_WASTE]
     this.localPileState.waste.forEach((cardId, i) => {
       const card = this.localDeck!.cards.find((c) => c.id === cardId)
       if (!card) return
       card.object.visible = true
-      card.object.position.set(wasteBase.x, CARD_Y_OFFSET + i * 0.0005, wasteBase.z)
+      card.object.position.set(
+        wasteBase.x + i * 0.003 * fanDirX,
+        CARD_Y_OFFSET + i * 0.002,
+        wasteBase.z + i * 0.003 * fanDirZ
+      )
       card.object.rotation.z = 0 // face-up
     })
 
-    // Stock pile: all face-down, stacked
+    // Stock pile: all face-down, staggered toward the player so depth is visible.
+    // A full stock of 35 cards looks noticeably thicker than a depleted one.
     const stockBase = this.localPilePositions[PILE_STOCK]
     this.localPileState.stock.forEach((cardId, i) => {
       const card = this.localDeck!.cards.find((c) => c.id === cardId)
       if (!card) return
-      card.object.position.set(stockBase.x, CARD_Y_OFFSET + i * 0.0005, stockBase.z)
+      card.object.position.set(
+        stockBase.x + i * 0.005 * fanDirX,
+        CARD_Y_OFFSET + i * 0.004,
+        stockBase.z + i * 0.005 * fanDirZ
+      )
       card.object.rotation.z = Math.PI // face-down
     })
 
@@ -786,7 +864,10 @@ export class NertzGame {
         const piles = this.localSeat
           ? computeDealPiles(this.localSeat, SEAT_RADIUS, PILE_OFFSET)
           : []
-        this.intro = new IntroAnimation(this.shuffle.shuffledCards, this.camera, piles)
+        const fanDir = this.localSeat
+          ? { x: Math.sin(this.localSeat.angle), z: Math.cos(this.localSeat.angle) }
+          : { x: 0, z: 1 }
+        this.intro = new IntroAnimation(this.shuffle.shuffledCards, this.camera, piles, fanDir)
       }
     } else if (this.intro && !this.intro.isComplete) {
       this.intro.update(deltaTime)
@@ -821,13 +902,39 @@ export class NertzGame {
       }
     }
 
+    const { clientWidth: cw, clientHeight: ch } = this.container
+
+    // Main scene — full viewport
+    this.renderer.setScissorTest(false)
+    this.renderer.setViewport(0, 0, cw, ch)
+    this.renderer.clear(true, true, false)
     this.renderer.render(this.scene, this.camera)
+
+    // Magnifier — bottom-left picture-in-picture using scissor test so only that
+    // region is cleared + rendered; the main scene outside is untouched.
+    if (this.magnifierCamera) {
+      const m = this.MINI_PX
+      const margin = 10
+      this.magnifierCamera.up.copy(this.camera.up)
+      this.magnifierCamera.position.set(this.mouseWorldPos.x, 8, this.mouseWorldPos.z)
+      this.magnifierCamera.lookAt(this.mouseWorldPos.x, 0, this.mouseWorldPos.z)
+
+      this.renderer.setScissorTest(true)
+      this.renderer.setScissor(margin, margin, m, m)
+      this.renderer.setViewport(margin, margin, m, m)
+      this.renderer.clear(true, true, false)
+      this.renderer.render(this.scene, this.magnifierCamera)
+      this.renderer.setScissorTest(false)
+      this.renderer.setViewport(0, 0, cw, ch)
+    }
   }
 
   destroy() {
     this.renderer.setAnimationLoop(null)
     window.removeEventListener("resize", this.onResize)
+    this.renderer.domElement.removeEventListener("mousemove", this.onMouseMoveGlobal)
     this.dragControls.detach()
+    if (this.magnifierEl) this.container.removeChild(this.magnifierEl)
     this.renderer.dispose()
     this.container.removeChild(this.renderer.domElement)
   }

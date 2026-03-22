@@ -23,6 +23,7 @@ const ease = (t: number): number => t * t * (3 - 2 * t)
 /** Per-card deal target: where it lands and whether it faces up */
 interface CardAssignment {
   targetX: number
+  targetY: number
   targetZ: number
   faceUp: boolean
 }
@@ -60,41 +61,60 @@ export class IntroAnimation {
    * @param cards - Shuffled 52-card deck in deal order
    * @param camera - Scene camera, zoomed out during the sequence
    * @param piles - Six world-space positions: [Nertz, Work1, Work2, Work3, Work4, Stock]
+   * @param fanDir - Unit vector pointing from center toward the player's seat
    */
   constructor(
     cards: Card[],
     camera: THREE.PerspectiveCamera,
-    piles: Array<{ x: number; z: number }>
+    piles: Array<{ x: number; z: number }>,
+    fanDir: { x: number; z: number }
   ) {
     this.cards = [...cards]
     this.camera = camera
     this.startPositions = cards.map((c) => c.object.position.clone())
-    this.assignments = this.buildAssignments(cards.length, piles)
+    this.assignments = this.buildAssignments(cards.length, piles, fanDir)
   }
 
   /**
-   * Maps each card index to a pile target and face-up flag:
+   * Maps each card index to a pile target and face-up flag.
+   * Nertz and Stock cards use the same XZ/Y stagger as `refreshLocalDisplay` so
+   * there is no visual pop when the live display takes over after the intro.
    * - 0–12 → Nertz pile (face-down; card 12 is the top card, dealt face-up)
    * - 13–16 → Work piles 1–4 (face-up)
    * - 17–51 → Stock pile (face-down)
    */
   private buildAssignments(
     total: number,
-    piles: Array<{ x: number; z: number }>
+    piles: Array<{ x: number; z: number }>,
+    fanDir: { x: number; z: number }
   ): CardAssignment[] {
+    let stockIndex = 0
     return Array.from({ length: total }, (_, i) => {
       if (i < NERTZ_PILE_SIZE) {
         return {
-          targetX: piles[0].x,
-          targetZ: piles[0].z,
+          targetX: piles[0].x + i * 0.005 * fanDir.x,
+          targetY: CARD_Y_OFFSET + i * 0.004,
+          targetZ: piles[0].z + i * 0.005 * fanDir.z,
           faceUp: i === NERTZ_PILE_SIZE - 1, // only the top card is face-up
         }
       }
       if (i < NERTZ_PILE_SIZE + WORK_PILE_COUNT) {
         const workIdx = i - NERTZ_PILE_SIZE + 1 // pile index 1–4
-        return { targetX: piles[workIdx].x, targetZ: piles[workIdx].z, faceUp: true }
+        return {
+          targetX: piles[workIdx].x,
+          targetY: CARD_Y_OFFSET,
+          targetZ: piles[workIdx].z,
+          faceUp: true,
+        }
       }
-      return { targetX: piles[6].x, targetZ: piles[6].z, faceUp: false }
+      // Stock pile — stagger matches refreshLocalDisplay stock rendering
+      const si = stockIndex++
+      return {
+        targetX: piles[6].x + si * 0.005 * fanDir.x,
+        targetY: CARD_Y_OFFSET + si * 0.004,
+        targetZ: piles[6].z + si * 0.005 * fanDir.z,
+        faceUp: false,
+      }
     })
   }
 
@@ -126,14 +146,14 @@ export class IntroAnimation {
 
     const card = this.cards[this.currentIndex]
     const start = this.startPositions[this.currentIndex]
-    const { targetX, targetZ, faceUp } = this.assignments[this.currentIndex]
+    const { targetX, targetY, targetZ, faceUp } = this.assignments[this.currentIndex]
 
-    // XZ: smooth glide to pile target
+    // XZ: smooth glide to pile target (staggered for nertz/stock)
     card.object.position.x = THREE.MathUtils.lerp(start.x, targetX, t)
     card.object.position.z = THREE.MathUtils.lerp(start.z, targetZ, t)
 
-    // Y: parabolic arc peaks at mid-flight
-    card.object.position.y = CARD_Y_OFFSET + CARD_ARC_HEIGHT * Math.sin(raw * Math.PI)
+    // Y: parabolic arc peaks at mid-flight, lands at staggered targetY
+    card.object.position.y = targetY + CARD_ARC_HEIGHT * Math.sin(raw * Math.PI)
 
     // Face-down cards flip during the second half of the arc; face-up cards don't flip
     if (!faceUp) {
@@ -145,16 +165,11 @@ export class IntroAnimation {
     }
   }
 
-  /** Snaps a card to its final resting position, stacked above any previously landed cards */
+  /** Snaps a card to its final resting position using its pre-computed staggered target */
   private landCard(card: Card): void {
-    const { targetX, targetZ, faceUp } = this.assignments[this.currentIndex]
+    const { targetX, targetY, targetZ, faceUp } = this.assignments[this.currentIndex]
 
-    // Count cards already at this pile target to compute stack Y offset
-    const stackHeight = this.assignments
-      .slice(0, this.currentIndex)
-      .filter((a) => a.targetX === targetX && a.targetZ === targetZ).length
-
-    card.object.position.set(targetX, CARD_Y_OFFSET + stackHeight * 0.0005, targetZ)
+    card.object.position.set(targetX, targetY, targetZ)
     card.object.rotation.z = faceUp ? 0 : Math.PI
 
     this.currentIndex++
