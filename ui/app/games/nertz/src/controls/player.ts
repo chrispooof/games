@@ -3,6 +3,15 @@ import { Card } from "../../../shared/types/deck"
 import { CARD_DRAG_Y, CARD_Y_OFFSET, FOUNDATION_SNAP_RADIUS } from "../utils/constants"
 import type { FoundationSlot } from "../world/foundations"
 
+/**
+ * Minimal client-side representation of one foundation slot's current state.
+ * Used by DragControls to prefer valid snap targets over merely nearest ones.
+ */
+export interface ClientFoundationState {
+  suit: string | null
+  topValue: number
+}
+
 /** A work pile drop target — cards snapped here are played to this pile */
 export interface WorkPileSlot {
   /** Snap target position — where the next card will land (end of fan) */
@@ -13,6 +22,34 @@ export interface WorkPileSlot {
   baseZ: number
   /** Work pile index 0–3 in the local player's row */
   index: number
+}
+
+const RANK_VALUE_MAP: Record<string, number> = {
+  A: 1,
+  "2": 2,
+  "3": 3,
+  "4": 4,
+  "5": 5,
+  "6": 6,
+  "7": 7,
+  "8": 8,
+  "9": 9,
+  "10": 10,
+  J: 11,
+  Q: 12,
+  K: 13,
+}
+
+/**
+ * Parses the suit and numeric value from a card ID of the form "p{n}_Card_{rank}_{suit}".
+ * Returns null if the format is unrecognised or the rank is unknown.
+ */
+const parseCardInfoFromId = (cardId: string): { suit: string; value: number } | null => {
+  const match = cardId.match(/^p\d+_Card_(.+)_(\w+)$/)
+  if (!match) return null
+  const value = RANK_VALUE_MAP[match[1]]
+  if (!value) return null
+  return { suit: match[2], value }
 }
 
 /**
@@ -69,6 +106,12 @@ export class DragControls {
 
   /** Foundation slot positions used to snap dropped cards */
   private foundationSlots: FoundationSlot[] = []
+
+  /**
+   * Current state of each foundation slot — used by smart snap to prefer
+   * slots where the dragged card can legally play over merely the nearest slot.
+   */
+  private foundationStates: ClientFoundationState[] = []
 
   /** Work pile positions used to snap dropped cards */
   private workPileSlots: WorkPileSlot[] = []
@@ -156,6 +199,15 @@ export class DragControls {
   /** Updates the foundation snap targets */
   setFoundationSlots(slots: FoundationSlot[]): void {
     this.foundationSlots = slots
+  }
+
+  /**
+   * Updates the live state of each foundation slot so smart snap can prefer
+   * slots where the dragged card can legally continue a sequence.
+   * Call this whenever any foundation changes (local or remote action).
+   */
+  setFoundationStates(states: ClientFoundationState[]): void {
+    this.foundationStates = states
   }
 
   /** Updates the work pile snap targets */
@@ -319,17 +371,57 @@ export class DragControls {
     let snappedFoundationIndex: number | null = null
     let snappedWorkPileIndex: number | null = null
 
-    // 1. Foundation snap — only for single-card drags (foundations take one card at a time)
+    // 1. Foundation snap — only for single-card drags (foundations take one card at a time).
+    //    Smart snap: parse the dragged card's suit and rank, then search a WIDER radius for
+    //    a slot where the card legally fits (same suit, next rank up — or empty for an Ace).
+    //    Falls back to nearest-slot logic within the normal snap radius when foundation state
+    //    is unavailable or no legal slot is found in the wider area.
     if (this.draggingGroup.length === 1) {
+      const cardInfo = parseCardInfoFromId(root.id)
+      // Wider search radius used when we can identify a legally valid target slot
+      const SMART_SNAP_RADIUS = 1.2
+
+      let nearestMatchDist = SMART_SNAP_RADIUS
+      let matchedSlotIndex: number | null = null
+
       for (let i = 0; i < this.foundationSlots.length; i++) {
         const slot = this.foundationSlots[i]
         const dist = Math.sqrt((px - slot.x) ** 2 + (pz - slot.z) ** 2)
-        if (dist < nearestDist) {
-          nearestDist = dist
-          px = slot.x
-          pz = slot.z
-          snapAngle = slot.angle
-          snappedFoundationIndex = i
+        if (dist >= nearestMatchDist) continue
+
+        const fs = this.foundationStates[i]
+        const fits =
+          cardInfo != null &&
+          fs != null &&
+          ((fs.topValue === 0 && cardInfo.value === 1) ||
+            (fs.suit === cardInfo.suit && cardInfo.value === fs.topValue + 1))
+
+        if (fits) {
+          nearestMatchDist = dist
+          matchedSlotIndex = i
+        }
+      }
+
+      if (matchedSlotIndex !== null) {
+        // Smart snap: found a valid legal target in the wider radius
+        const slot = this.foundationSlots[matchedSlotIndex]
+        nearestDist = nearestMatchDist
+        px = slot.x
+        pz = slot.z
+        snapAngle = slot.angle
+        snappedFoundationIndex = matchedSlotIndex
+      } else {
+        // Fallback: snap to nearest slot within normal radius (server will validate)
+        for (let i = 0; i < this.foundationSlots.length; i++) {
+          const slot = this.foundationSlots[i]
+          const dist = Math.sqrt((px - slot.x) ** 2 + (pz - slot.z) ** 2)
+          if (dist < nearestDist) {
+            nearestDist = dist
+            px = slot.x
+            pz = slot.z
+            snapAngle = slot.angle
+            snappedFoundationIndex = i
+          }
         }
       }
     }

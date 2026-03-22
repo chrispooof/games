@@ -189,9 +189,12 @@ export const registerSocketHandlers = (io: Server): void => {
         // Persist updated state
         await updateGameState(roomCode, "nertz", nertzState as unknown as Record<string, unknown>)
 
-        // Broadcast position delta to the room so other clients update card rendering
+        // Broadcast position delta to the room so other clients update card rendering.
+        // Include foundation state when a foundation play happened so clients can
+        // keep their smart-snap foundation tracking in sync.
         socket.to(roomCode).emit("game-state-update", {
           cardPositions: gameStateUpdate.cardPositions,
+          ...(gameStateUpdate.foundations ? { foundations: gameStateUpdate.foundations } : {}),
         })
 
         if (isGameOver) {

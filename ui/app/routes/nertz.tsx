@@ -17,6 +17,7 @@ interface PlayerRef {
 
 interface GameState {
   cardPositions?: Record<string, { x: number; z: number }>
+  foundations?: Array<{ suit: string | null; topValue: number }>
 }
 
 type Scene =
@@ -51,13 +52,15 @@ export default function NertzRoute() {
     // which deck runs the intro animation vs. which are shown at their saved positions
     const localPlayerIndex = scene.initialPlayers.findIndex((p) => p.playerId === getPlayerId())
     const cardPositions = scene.gameState?.cardPositions ?? null
+    const initialFoundations = scene.gameState?.foundations ?? null
 
     const game = new NertzGame(
       containerRef.current,
       scene.maxPlayers,
       scene.initialPlayers.length,
       localPlayerIndex >= 0 ? localPlayerIndex : 0,
-      cardPositions
+      cardPositions,
+      initialFoundations
     )
     gameRef.current = game
 
@@ -136,10 +139,12 @@ export default function NertzRoute() {
 
     const onGameStateUpdate = ({
       cardPositions,
+      foundations,
     }: {
       cardPositions: Record<string, { x: number; z: number }>
+      foundations?: Array<{ suit: string | null; topValue: number }>
     }) => {
-      gameRef.current?.applyState(cardPositions)
+      gameRef.current?.applyState(cardPositions, foundations)
     }
 
     const onGameOver = ({ winnerId }: { winnerId: string }) => {

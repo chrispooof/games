@@ -5,7 +5,7 @@ import deckUrl from "~/assets/deck.glb?url"
 import { Table } from "./world/terrain"
 import { FoundationArea } from "./world/foundations"
 import { PlayerDeck, type Seat } from "./world/player-deck"
-import { DragControls } from "./controls/player"
+import { DragControls, type ClientFoundationState } from "./controls/player"
 import { ShuffleAnimation } from "./scenes/shuffle"
 import { IntroAnimation } from "./scenes/intro"
 import { computeSeat, computeDealPiles } from "./utils/geometry"
@@ -95,6 +95,11 @@ export class NertzGame {
   private localPilePositions: Array<{ x: number; z: number }> | null = null
   /** Pile ordering for the local player — updated on confirmed server actions */
   private localPileState: LocalPileState | null = null
+  /**
+   * Mirrors the server's foundation state so DragControls can snap to the right slot.
+   * Updated on every confirmed foundation play (local or remote).
+   */
+  private localFoundationState: ClientFoundationState[] = []
   /** Saved positions from the server — skips intro when present */
   private initialCardPositions: Record<string, { x: number; z: number }> | null
   /** In-flight typed action awaiting an `action-result` response */
@@ -106,19 +111,25 @@ export class NertzGame {
    * @param initialDeckCount - How many player decks to create on load
    * @param localPlayerIndex - Deck index for the local player
    * @param initialCardPositions - Saved server positions; skips the intro when present
+   * @param initialFoundations - Server foundation state for reconnects; pre-populates smart snap
    */
   constructor(
     container: HTMLElement,
     maxPlayers = 1,
     initialDeckCount = 1,
     localPlayerIndex = 0,
-    initialCardPositions: Record<string, { x: number; z: number }> | null = null
+    initialCardPositions: Record<string, { x: number; z: number }> | null = null,
+    initialFoundations: ClientFoundationState[] | null = null
   ) {
     this.container = container
     this.maxPlayers = maxPlayers
     this.initialDeckCount = initialDeckCount
     this.localPlayerIndex = localPlayerIndex
     this.initialCardPositions = initialCardPositions
+    // Initialise foundation state: use server state if available, else all empty slots
+    this.localFoundationState =
+      initialFoundations ??
+      Array.from({ length: maxPlayers * 4 }, () => ({ suit: null, topValue: 0 }))
     this.renderer = new THREE.WebGLRenderer({ antialias: true })
     this.scene = new THREE.Scene()
     this.scene.background = new THREE.Color(SCENE_BACKGROUND_COLOR)
@@ -142,6 +153,7 @@ export class NertzGame {
       }
     )
     this.dragControls.setFoundationSlots(this.foundationArea.slots)
+    this.dragControls.setFoundationStates(this.localFoundationState)
     this.loadDeck()
     this.init()
   }
@@ -377,8 +389,17 @@ export class NertzGame {
   /**
    * Applies a batch of card positions to all decks.
    * Used for reconnect state restore and other-player position broadcasts.
+   * @param foundations - Optional updated foundation state from the server broadcast.
+   *   Passed when the remote action was a foundation play so smart snap stays accurate.
    */
-  applyState(positions: Record<string, { x: number; z: number }>): void {
+  applyState(
+    positions: Record<string, { x: number; z: number }>,
+    foundations?: ClientFoundationState[]
+  ): void {
+    if (foundations) {
+      this.localFoundationState = foundations
+      this.dragControls.setFoundationStates(this.localFoundationState)
+    }
     for (const deck of this.playerDecks) {
       for (const card of deck.cards) {
         const pos = positions[card.id]
@@ -460,7 +481,17 @@ export class NertzGame {
 
     if (action.type === "play-to-foundation" || action.type === "play-to-work-pile") {
       this.removeFromLocalPile(action.source, action.sourceIndex, action.cardId)
-      if (action.type === "play-to-work-pile") {
+      if (action.type === "play-to-foundation") {
+        // Update local foundation state so DragControls can smart-snap to the right slot
+        const match = action.cardId.match(/^p\d+_Card_(.+)_(\w+)$/)
+        if (match) {
+          const value = RANK_VALUES[match[1]] ?? 0
+          if (value > 0) {
+            this.localFoundationState[action.slotIndex] = { suit: match[2], topValue: value }
+            this.dragControls.setFoundationStates(this.localFoundationState)
+          }
+        }
+      } else if (action.type === "play-to-work-pile") {
         const targetPile = this.localPileState.workPiles[action.targetPileIndex]
         const newValue = parseCardRankValue(action.cardId)
         const topValue =
@@ -527,7 +558,7 @@ export class NertzGame {
    */
   private handleCardDrop(
     cardId: string,
-    position: { x: number; z: number },
+    _position: { x: number; z: number },
     foundationSlotIndex: number | null,
     workPileIndex: number | null
   ): void {
