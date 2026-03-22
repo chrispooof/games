@@ -66,3 +66,20 @@ export const TABLE_BORDER_PADDING = 0.1
 
 /** Y offset of the border below the felt to prevent z-fighting */
 export const BORDER_Y_OFFSET = -0.01
+
+/** Numeric values for each card rank */
+export const RANK_VALUES: Record<string, number> = {
+  A: 1,
+  "2": 2,
+  "3": 3,
+  "4": 4,
+  "5": 5,
+  "6": 6,
+  "7": 7,
+  "8": 8,
+  "9": 9,
+  "10": 10,
+  J: 11,
+  Q: 12,
+  K: 13,
+}

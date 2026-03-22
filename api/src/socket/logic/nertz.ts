@@ -57,6 +57,12 @@ export type GameAction =
       source: "nertz" | "work" | "waste"
       sourceIndex?: number
     }
+  | {
+      type: "merge-work-piles"
+      sourcePileIndex: number
+      cardId: string
+      targetPileIndex: number
+    }
   | { type: "flip-stock" }
   | { type: "move-card"; cardId: string; position: { x: number; z: number } }
 
@@ -108,6 +114,13 @@ const parseCardId = (cardId: string): CardIdentity | null => {
 
 /** True for red suits (hearts, diamonds) */
 const isRed = (suit: Suit): boolean => suit === "hearts" || suit === "diamonds"
+
+/**
+ * Returns true when two cards are adjacent in rank (±1) and alternate in color.
+ * This is the connection rule for all work pile joins.
+ */
+const fitsAdjacent = (a: CardIdentity, b: CardIdentity): boolean =>
+  Math.abs(a.value - b.value) === 1 && isRed(a.suit) !== isRed(b.suit)
 
 /**
  * Returns the source pile array for the given source descriptor.
@@ -199,15 +212,17 @@ const validateWorkPilePlay = (
     return null
   }
 
-  const topCardId = targetPile[targetPile.length - 1]
-  const topIdentity = parseCardId(topCardId)
-  if (!topIdentity) return "illegal-move"
+  const topIdentity = parseCardId(targetPile[targetPile.length - 1])
+  const bottomIdentity = parseCardId(targetPile[0])
+  if (!topIdentity || !bottomIdentity) return "illegal-move"
 
-  // Must be one rank lower and alternate color
-  if (identity.value !== topIdentity.value - 1) return "illegal-move"
-  if (isRed(identity.suit) === isRed(topIdentity.suit)) return "illegal-move"
+  // Card may connect at either end of the target pile:
+  //   - adjacent to the current top  → card appends on top (push)
+  //   - adjacent to the current base → card inserts behind (unshift)
+  if (fitsAdjacent(identity, topIdentity)) return null
+  if (fitsAdjacent(identity, bottomIdentity)) return null
 
-  return null
+  return "illegal-move"
 }
 
 // ---------------------------------------------------------------------------
@@ -235,20 +250,135 @@ const applyFoundationPlay = (
   }
 }
 
+const WORK_PILE_FAN_OFFSET = 0.2
+/** Work piles start at pile index 1 in the 7-pile layout */
+const PILE_WORK_START = 1
+
 const applyWorkPilePlay = (
   action: Extract<GameAction, { type: "play-to-work-pile" }>,
   playerState: PlayerPileState,
   state: NertzGameState,
-  cardPosition: { x: number; z: number },
 ): Partial<NertzGameState> => {
   popFromPile(playerState, action.source, action.sourceIndex)
-  playerState.workPiles[action.targetPileIndex].push(action.cardId)
-  state.cardPositions[action.cardId] = cardPosition
+
+  const targetPile = playerState.workPiles[action.targetPileIndex]
+  const newIdentity = parseCardId(action.cardId)
+  const topIdentity = targetPile.length > 0 ? parseCardId(targetPile[targetPile.length - 1]) : null
+
+  // New card ranks higher than the current pile top → it becomes the new base (unshift).
+  // Lower-ranked card → appends at the tip (push).
+  // Comparing against the top card works because the pile is always ordered highest-at-base.
+  if (newIdentity && topIdentity && newIdentity.value > topIdentity.value) {
+    targetPile.unshift(action.cardId)
+  } else {
+    targetPile.push(action.cardId)
+  }
+
+  // Compute fanned positions for ALL cards in the updated pile so remote clients
+  // can render the full fan without needing separate pile state.
+  // Fan direction: toward the player (positive radial direction).
+  const seat = computeSeat(playerState.playerIndex, state.numPlayers, SEAT_RADIUS)
+  const piles = computeDealPiles(seat, SEAT_RADIUS, PILE_OFFSET)
+  const basePos = piles[PILE_WORK_START + action.targetPileIndex]
+  const fanDirX = Math.sin(seat.angle)
+  const fanDirZ = Math.cos(seat.angle)
+
+  const cardPositionsDelta: Record<string, { x: number; z: number }> = {}
+  for (const [i, cardId] of playerState.workPiles[action.targetPileIndex].entries()) {
+    const pos = {
+      x: basePos.x + i * WORK_PILE_FAN_OFFSET * fanDirX,
+      z: basePos.z + i * WORK_PILE_FAN_OFFSET * fanDirZ,
+    }
+    state.cardPositions[cardId] = pos
+    cardPositionsDelta[cardId] = pos
+  }
 
   return {
     players: state.players,
-    cardPositions: { [action.cardId]: cardPosition },
+    cardPositions: cardPositionsDelta,
   }
+}
+
+/**
+ * Validates a merge-work-piles action (moving a card and everything above it
+ * from one work pile to another).
+ * The bottom card of the moved group must connect to the top of the target pile
+ * with adjacent rank (±1) and alternating color.
+ */
+const validateMergeWorkPiles = (
+  action: Extract<GameAction, { type: "merge-work-piles" }>,
+  playerState: PlayerPileState,
+): "illegal-move" | null => {
+  if (action.sourcePileIndex === action.targetPileIndex) return "illegal-move"
+
+  const sourcePile = playerState.workPiles[action.sourcePileIndex]
+  const targetPile = playerState.workPiles[action.targetPileIndex]
+  if (!sourcePile || !targetPile) return "illegal-move"
+
+  const groupStart = sourcePile.indexOf(action.cardId)
+  if (groupStart < 0) return "illegal-move"
+
+  const bottomIdentity = parseCardId(action.cardId)
+  if (!bottomIdentity) return "illegal-move"
+
+  // Any group can go onto an empty target pile
+  if (targetPile.length === 0) return null
+
+  const targetTopIdentity = parseCardId(targetPile[targetPile.length - 1])
+  const targetBottomIdentity = parseCardId(targetPile[0])
+  if (!targetTopIdentity || !targetBottomIdentity) return "illegal-move"
+
+  // The dragged group's bottom card connects to the target top → group appends on top
+  if (fitsAdjacent(bottomIdentity, targetTopIdentity)) return null
+
+  // The dragged group's top card connects to the target base → group inserts behind
+  const groupTopCardId = sourcePile[sourcePile.length - 1]
+  const groupTopIdentity = parseCardId(groupTopCardId)
+  if (groupTopIdentity && fitsAdjacent(groupTopIdentity, targetBottomIdentity)) return null
+
+  return "illegal-move"
+}
+
+const applyMergeWorkPiles = (
+  action: Extract<GameAction, { type: "merge-work-piles" }>,
+  playerState: PlayerPileState,
+  state: NertzGameState,
+): Partial<NertzGameState> => {
+  const sourcePile = playerState.workPiles[action.sourcePileIndex]
+  const targetPile = playerState.workPiles[action.targetPileIndex]
+
+  const groupStart = sourcePile.indexOf(action.cardId)
+  const group = sourcePile.splice(groupStart) // removes from source
+
+  const bottomIdentity = parseCardId(action.cardId)
+  const targetTopIdentity = targetPile.length > 0 ? parseCardId(targetPile[targetPile.length - 1]) : null
+
+  // Group's bottom card ranks higher than the target's top → group goes behind (unshift).
+  // Otherwise group appends on top of the target (push).
+  if (bottomIdentity && targetTopIdentity && bottomIdentity.value > targetTopIdentity.value) {
+    targetPile.unshift(...group)
+  } else {
+    targetPile.push(...group)
+  }
+
+  // Recompute fanned positions for all cards in the target pile
+  const seat = computeSeat(playerState.playerIndex, state.numPlayers, SEAT_RADIUS)
+  const piles = computeDealPiles(seat, SEAT_RADIUS, PILE_OFFSET)
+  const basePos = piles[PILE_WORK_START + action.targetPileIndex]
+  const fanDirX = Math.sin(seat.angle)
+  const fanDirZ = Math.cos(seat.angle)
+
+  const cardPositionsDelta: Record<string, { x: number; z: number }> = {}
+  for (const [i, cardId] of targetPile.entries()) {
+    const pos = {
+      x: basePos.x + i * WORK_PILE_FAN_OFFSET * fanDirX,
+      z: basePos.z + i * WORK_PILE_FAN_OFFSET * fanDirZ,
+    }
+    state.cardPositions[cardId] = pos
+    cardPositionsDelta[cardId] = pos
+  }
+
+  return { players: state.players, cardPositions: cardPositionsDelta }
 }
 
 // ---------------------------------------------------------------------------
@@ -308,7 +438,16 @@ export const processAction = (
     if (error) {
       return { result: { ok: false, cardId: action.cardId, reason: error }, isGameOver: false }
     }
-    const delta = applyWorkPilePlay(action, playerState, state, resolvedPosition)
+    const delta = applyWorkPilePlay(action, playerState, state)
+    return { result: { ok: true, cardId: action.cardId }, gameStateUpdate: delta, isGameOver: false }
+  }
+
+  if (action.type === "merge-work-piles") {
+    const error = validateMergeWorkPiles(action, playerState)
+    if (error) {
+      return { result: { ok: false, cardId: action.cardId, reason: error }, isGameOver: false }
+    }
+    const delta = applyMergeWorkPiles(action, playerState, state)
     return { result: { ok: true, cardId: action.cardId }, gameStateUpdate: delta, isGameOver: false }
   }
 

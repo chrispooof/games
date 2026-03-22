@@ -22,6 +22,17 @@ export type PlayToWorkPileAction = {
 /** Action: flip up to 3 cards from stock to waste */
 export type FlipStockAction = { type: "flip-stock" }
 
+/** Action: drag a card (and all cards above it) from one work pile to another */
+export type MergeWorkPilesAction = {
+  type: "merge-work-piles"
+  /** Source work pile index 0–3 */
+  sourcePileIndex: number
+  /** The bottom card of the dragged group (cardId and everything above it moves) */
+  cardId: string
+  /** Target work pile index 0–3 */
+  targetPileIndex: number
+}
+
 /** Legacy free-move action (no server validation) */
 export type MoveCardAction = {
   type: "move-card"
@@ -33,6 +44,7 @@ export type MoveCardAction = {
 export type GameAction =
   | PlayToFoundationAction
   | PlayToWorkPileAction
+  | MergeWorkPilesAction
   | FlipStockAction
   | MoveCardAction
 

@@ -162,7 +162,9 @@ export const registerSocketHandlers = (io: Server): void => {
         return
       }
 
-      // Resolve the canonical position for foundation plays from the server's geometry
+      // For foundation plays, resolve the canonical slot position server-side
+      // (client coordinates are not trusted). Work pile positions are computed
+      // inside applyWorkPilePlay using server geometry.
       let resolvedPosition = { x: 0, z: 0 }
       if (action.type === "play-to-foundation") {
         const slotPos = getFoundationSlotPosition(action.slotIndex, nertzState.numPlayers)
@@ -171,9 +173,6 @@ export const registerSocketHandlers = (io: Server): void => {
           return
         }
         resolvedPosition = slotPos
-      } else if (action.type === "play-to-work-pile") {
-        // Use the client's reported position for work pile moves (position is cosmetic)
-        resolvedPosition = nertzState.cardPositions[action.cardId] ?? { x: 0, z: 0 }
       }
 
       const { result, gameStateUpdate, isGameOver } = processAction(

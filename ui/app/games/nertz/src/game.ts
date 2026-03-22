@@ -23,6 +23,7 @@ import {
   DIR_LIGHT_INTENSITY,
   MAX_DELTA_TIME,
   PILE_OFFSET,
+  RANK_VALUES,
   SCENE_BACKGROUND_COLOR,
   SEAT_RADIUS,
   SHADOW_CAM_EXTENT,
@@ -30,6 +31,12 @@ import {
   SHADOW_CAM_NEAR,
   SHADOW_MAP_SIZE,
 } from "./utils/constants"
+
+/** Parses the numeric rank value from a card ID of the form p{n}_Card_{rank}_{suit} */
+const parseCardRankValue = (cardId: string): number => {
+  const match = cardId.match(/^p\d+_Card_(.+)_\w+$/)
+  return match ? (RANK_VALUES[match[1]] ?? 0) : 0
+}
 
 /** Pile indices in the 7-element computeDealPiles array */
 const PILE_NERTZ = 0
@@ -241,10 +248,27 @@ export class NertzGame {
     if (!match) return Math.PI
     const seat = computeSeat(parseInt(match[1]), this.maxPlayers, SEAT_RADIUS)
     const piles = computeDealPiles(seat, SEAT_RADIUS, PILE_OFFSET)
-    // Nertz pile position and work pile positions are all face-up on initial deal
-    for (let i = PILE_NERTZ; i <= PILE_WORK_START + 3; i++) {
+    // Nertz pile, work pile bases, and waste pile are face-up on initial deal
+    for (let i = PILE_NERTZ; i <= PILE_WASTE; i++) {
       if (Math.abs(x - piles[i].x) < 0.01 && Math.abs(z - piles[i].z) < 0.01) return 0
     }
+
+    // Work pile cards at fanned positions (offset toward player) are also face-up
+    const fanDirX = Math.sin(seat.angle)
+    const fanDirZ = Math.cos(seat.angle)
+    for (let wi = 0; wi < 4; wi++) {
+      const base = piles[PILE_WORK_START + wi]
+      const dx = x - base.x
+      const dz = z - base.z
+      const proj = dx * fanDirX + dz * fanDirZ
+      const perpX = dx - proj * fanDirX
+      const perpZ = dz - proj * fanDirZ
+      const perpDist = Math.sqrt(perpX ** 2 + perpZ ** 2)
+      if (proj >= -0.05 && proj <= 14 * WORK_PILE_FAN_OFFSET + 0.05 && perpDist < 0.1) {
+        return 0
+      }
+    }
+
     return Math.PI
   }
 
@@ -272,9 +296,9 @@ export class NertzGame {
     if (!this.localPileState || !this.localDeck || !this.localPilePositions || !this.localSeat)
       return
 
-    // Fan direction: toward table center (negative radial) — plenty of space, no seat clipping
-    const fanDirX = -Math.sin(this.localSeat.angle)
-    const fanDirZ = -Math.cos(this.localSeat.angle)
+    // Fan direction: toward player (positive radial) — cards extend downward on screen
+    const fanDirX = Math.sin(this.localSeat.angle)
+    const fanDirZ = Math.cos(this.localSeat.angle)
 
     // Nertz pile: all face-down except the top card
     const nertzBase = this.localPilePositions[PILE_NERTZ]
@@ -296,7 +320,7 @@ export class NertzGame {
         card.object.visible = true
         card.object.position.set(
           basePos.x + i * WORK_PILE_FAN_OFFSET * fanDirX,
-          CARD_Y_OFFSET + i * 0.002,
+          CARD_Y_OFFSET + i * 0.01,
           basePos.z + i * WORK_PILE_FAN_OFFSET * fanDirZ
         )
         card.object.rotation.z = 0 // all work pile cards face-up
@@ -340,6 +364,7 @@ export class NertzGame {
         card.object.visible = true
         card.object.position.x = pos.x
         card.object.position.z = pos.z
+        card.object.position.y = CARD_Y_OFFSET + this.computeCardFanY(card.id, pos.x, pos.z)
         card.object.rotation.z = this.getFaceRotation(card.id, pos.x, pos.z)
         const foundationAngle = this.getFoundationAngle(pos.x, pos.z)
         if (foundationAngle !== null) card.object.rotation.y = foundationAngle
@@ -361,12 +386,41 @@ export class NertzGame {
           card.object.visible = true
           card.object.position.x = pos.x
           card.object.position.z = pos.z
+          card.object.position.y = CARD_Y_OFFSET + this.computeCardFanY(card.id, pos.x, pos.z)
           card.object.rotation.z = this.getFaceRotation(card.id, pos.x, pos.z)
           const foundationAngle = this.getFoundationAngle(pos.x, pos.z)
           if (foundationAngle !== null) card.object.rotation.y = foundationAngle
         }
       }
     }
+  }
+
+  /**
+   * Computes the y-offset above CARD_Y_OFFSET for a card at the given world position.
+   * For cards fanned along a work pile, returns `fanIndex * 0.01` so each card in
+   * the fan sits slightly above the previous — preventing z-fighting.
+   * Returns 0 for all other positions (stacked piles, foundation, etc.)
+   */
+  private computeCardFanY(cardId: string, x: number, z: number): number {
+    const match = cardId.match(/^p(\d+)_/)
+    if (!match) return 0
+    const seat = computeSeat(parseInt(match[1]), this.maxPlayers, SEAT_RADIUS)
+    const piles = computeDealPiles(seat, SEAT_RADIUS, PILE_OFFSET)
+    const fanDirX = Math.sin(seat.angle)
+    const fanDirZ = Math.cos(seat.angle)
+    for (let wi = 0; wi < 4; wi++) {
+      const base = piles[PILE_WORK_START + wi]
+      const dx = x - base.x
+      const dz = z - base.z
+      const proj = dx * fanDirX + dz * fanDirZ
+      const perpX = dx - proj * fanDirX
+      const perpZ = dz - proj * fanDirZ
+      const perpDist = Math.sqrt(perpX ** 2 + perpZ ** 2)
+      if (proj >= -0.05 && proj <= 14 * WORK_PILE_FAN_OFFSET + 0.05 && perpDist < 0.1) {
+        return Math.round(proj / WORK_PILE_FAN_OFFSET) * 0.01
+      }
+    }
+    return 0
   }
 
   /** Handles the legacy `move-card` broadcast from remote players */
@@ -395,6 +449,10 @@ export class NertzGame {
 
     if (!result.ok) {
       this.dragControls.snapBackCard(result.cardId)
+      // Refresh the full display to restore correct fanned y-positions — snapBackCard
+      // only restores x/z and hardcodes y=CARD_Y_OFFSET, which causes z-fighting
+      // when the card was mid-stack in a fanned pile.
+      this.refreshLocalDisplay()
       return
     }
 
@@ -403,7 +461,34 @@ export class NertzGame {
     if (action.type === "play-to-foundation" || action.type === "play-to-work-pile") {
       this.removeFromLocalPile(action.source, action.sourceIndex, action.cardId)
       if (action.type === "play-to-work-pile") {
-        this.localPileState.workPiles[action.targetPileIndex].push(action.cardId)
+        const targetPile = this.localPileState.workPiles[action.targetPileIndex]
+        const newValue = parseCardRankValue(action.cardId)
+        const topValue =
+          targetPile.length > 0 ? parseCardRankValue(targetPile[targetPile.length - 1]) : 0
+        // New card ranks higher than current pile top → becomes new base (unshift).
+        // Lower-ranked card → appends at the tip (push). Mirrors server applyWorkPilePlay.
+        if (newValue > topValue) {
+          targetPile.unshift(action.cardId)
+        } else {
+          targetPile.push(action.cardId)
+        }
+      }
+    } else if (action.type === "merge-work-piles") {
+      const sourcePile = this.localPileState.workPiles[action.sourcePileIndex]
+      const targetPile = this.localPileState.workPiles[action.targetPileIndex]
+      const groupStart = sourcePile.indexOf(action.cardId)
+      if (groupStart >= 0) {
+        const group = sourcePile.splice(groupStart)
+        const bottomValue = parseCardRankValue(action.cardId)
+        const topValue =
+          targetPile.length > 0 ? parseCardRankValue(targetPile[targetPile.length - 1]) : 0
+        // Group bottom ranks higher than target top → group goes behind (unshift).
+        // Otherwise appends on top (push). Mirrors server applyMergeWorkPiles.
+        if (bottomValue > topValue) {
+          targetPile.unshift(...group)
+        } else {
+          targetPile.push(...group)
+        }
       }
     } else if (action.type === "flip-stock") {
       if (this.localPileState.stock.length === 0) {
@@ -446,10 +531,13 @@ export class NertzGame {
     foundationSlotIndex: number | null,
     workPileIndex: number | null
   ): void {
+    const source = this.findCardSource(cardId)
+
     if (foundationSlotIndex !== null) {
-      const source = this.findCardSource(cardId)
-      if (!source) {
+      // Only the top card of a pile can go to a foundation
+      if (!source || !source.isTop) {
         this.dragControls.snapBackCard(cardId)
+        this.refreshLocalDisplay()
         return
       }
       const action: GameAction = {
@@ -465,9 +553,29 @@ export class NertzGame {
     }
 
     if (workPileIndex !== null) {
-      const source = this.findCardSource(cardId)
       if (!source) {
         this.dragControls.snapBackCard(cardId)
+        this.refreshLocalDisplay()
+        return
+      }
+
+      if (source.pileType === "work") {
+        // Work-to-work: move this card and everything above it as a group
+        const action: GameAction = {
+          type: "merge-work-piles",
+          sourcePileIndex: source.pileIndex!,
+          cardId,
+          targetPileIndex: workPileIndex,
+        }
+        this.pendingAction = action
+        socket.emit("game-action", action)
+        return
+      }
+
+      // Nertz or waste top card → work pile
+      if (!source.isTop) {
+        this.dragControls.snapBackCard(cardId)
+        this.refreshLocalDisplay()
         return
       }
       const action: GameAction = {
@@ -475,34 +583,41 @@ export class NertzGame {
         cardId,
         targetPileIndex: workPileIndex,
         source: source.pileType,
-        ...(source.pileIndex !== undefined ? { sourceIndex: source.pileIndex } : {}),
       }
       this.pendingAction = action
       socket.emit("game-action", action)
       return
     }
 
-    // No valid target — snap back to source position
+    // No valid target — snap back to source position and refresh y-positions
     this.dragControls.snapBackCard(cardId)
+    this.refreshLocalDisplay()
   }
 
   /**
-   * Finds the source pile for a card by checking if it is the TOP of any local pile.
-   * Returns null for buried cards or when pile state is unknown.
+   * Finds the source pile for a card.
+   * For work piles, returns the card's index within the pile so callers can
+   * determine whether it's the top card or part of a group.
    */
-  private findCardSource(
-    cardId: string
-  ): { pileType: "nertz" | "work" | "waste"; pileIndex?: number } | null {
+  private findCardSource(cardId: string): {
+    pileType: "nertz" | "work" | "waste"
+    pileIndex?: number
+    /** True when the card is the playable top of its pile */
+    isTop: boolean
+  } | null {
     if (!this.localPileState) return null
     const { nertzPile, workPiles, waste } = this.localPileState
 
-    if (nertzPile[nertzPile.length - 1] === cardId) return { pileType: "nertz" }
+    if (nertzPile[nertzPile.length - 1] === cardId) return { pileType: "nertz", isTop: true }
+
     for (let i = 0; i < 4; i++) {
-      if (workPiles[i][workPiles[i].length - 1] === cardId) {
-        return { pileType: "work", pileIndex: i }
+      const idx = workPiles[i].indexOf(cardId)
+      if (idx >= 0) {
+        return { pileType: "work", pileIndex: i, isTop: idx === workPiles[i].length - 1 }
       }
     }
-    if (waste[waste.length - 1] === cardId) return { pileType: "waste" }
+
+    if (waste[waste.length - 1] === cardId) return { pileType: "waste", isTop: true }
     return null
   }
 
@@ -523,8 +638,11 @@ export class NertzGame {
   }
 
   /**
-   * Restricts the draggable card set to the top card of each playable pile.
-   * Stock cards are never draggable — flip them via the Flip Stock button.
+   * Updates the draggable card set.
+   * - Nertz pile top and waste pile top: single draggable cards
+   * - Work piles: every card is draggable (dragging from index k picks up
+   *   cards k through the top as a group, handled by updateWorkPileGroups)
+   * - Stock cards are never draggable — flip them via the Flip Stock button
    */
   private updateDraggableCards(): void {
     if (!this.localPileState || !this.localDeck) return
@@ -539,10 +657,42 @@ export class NertzGame {
     }
 
     addTop(nertzPile)
-    for (const pile of workPiles) addTop(pile)
+
+    // All work pile cards are draggable; clicking any one picks up that card
+    // and everything above it via the cardGroups map
+    for (const pile of workPiles) {
+      for (const cardId of pile) {
+        const card = this.localDeck!.cards.find((c) => c.id === cardId)
+        if (card) draggable.push(card)
+      }
+    }
+
     addTop(waste)
 
     this.dragControls.setCards(draggable)
+    this.updateWorkPileGroups()
+  }
+
+  /**
+   * Builds the cardGroups map for DragControls so that dragging any work pile
+   * card automatically picks up the entire sub-pile from that card to the top.
+   */
+  private updateWorkPileGroups(): void {
+    if (!this.localPileState || !this.localDeck) return
+    const groups = new Map<string, Card[]>()
+
+    for (const pile of this.localPileState.workPiles) {
+      for (let i = 0; i < pile.length; i++) {
+        const group: Card[] = []
+        for (let j = i; j < pile.length; j++) {
+          const card = this.localDeck!.cards.find((c) => c.id === pile[j])
+          if (card) group.push(card)
+        }
+        if (group.length > 0) groups.set(pile[i], group)
+      }
+    }
+
+    this.dragControls.setCardGroups(groups)
   }
 
   /**
@@ -554,17 +704,21 @@ export class NertzGame {
     const workPiles =
       this.localPileState?.workPiles ??
       ([[], [], [], []] as [string[], string[], string[], string[]])
-    const fanDirX = -Math.sin(this.localSeat.angle)
-    const fanDirZ = -Math.cos(this.localSeat.angle)
+    const fanDirX = Math.sin(this.localSeat.angle)
+    const fanDirZ = Math.cos(this.localSeat.angle)
 
     const slots = []
     for (let i = 0; i < 4; i++) {
       const basePos = this.localPilePositions[PILE_WORK_START + i]
       const pileLen = workPiles[i].length
-      // Snap target = position where the next card will be placed
+      // Snap target = where the next card will land (end of fan)
+      // baseX/baseZ = pile origin, used for segment hit detection so the user
+      // can drop anywhere along the visible pile, not just at the tip
       slots.push({
         x: basePos.x + pileLen * WORK_PILE_FAN_OFFSET * fanDirX,
         z: basePos.z + pileLen * WORK_PILE_FAN_OFFSET * fanDirZ,
+        baseX: basePos.x,
+        baseZ: basePos.z,
         index: i,
       })
     }
