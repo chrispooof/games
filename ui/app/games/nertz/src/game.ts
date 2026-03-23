@@ -29,7 +29,6 @@ import {
   PLAYABLE_GLOW_COLOR,
   PLAYABLE_GLOW_INTENSITY,
   SCENE_BACKGROUND_COLOR,
-  SEAT_RADIUS,
   FOUNDATION_CARD_SCALE,
   SHADOW_CAM_EXTENT,
   SHADOW_CAM_FAR,
@@ -51,6 +50,15 @@ const PILE_STOCK = 6
 
 /** How far each card in a fanned work pile is offset from the previous (world units) */
 const WORK_PILE_FAN_OFFSET = 0.2
+
+/** Base seat radius for low player counts (4 or fewer) */
+const BASE_SEAT_RADIUS = 2.5
+/** Extra seat radius per player above 4 to avoid crowding near foundations */
+const SEAT_RADIUS_PER_PLAYER = 0.35
+
+/** Computes seat radius scaled by total players so center foundations remain clear */
+const computeSeatRadius = (maxPlayers: number): number =>
+  BASE_SEAT_RADIUS + Math.max(0, maxPlayers - 4) * SEAT_RADIUS_PER_PLAYER
 
 /** Local pile state maintained in parallel with the server */
 interface LocalPileState {
@@ -137,6 +145,8 @@ export class NertzGame {
   private miniCamera: THREE.OrthographicCamera | null = null
   /** Cached data-URL images of rendered card faces, keyed by card ID */
   private cardImageCache = new Map<string, string>()
+  /** Dynamic seat radius scaled by player count */
+  private seatRadius: number
   /** Last received opponent counts/tops — re-applied after decks load */
   private lastOpponentCounts: Record<string, number> | null = null
   private lastOpponentTops: Record<string, string | null> | null = null
@@ -161,6 +171,7 @@ export class NertzGame {
     this.maxPlayers = maxPlayers
     this.initialDeckCount = initialDeckCount
     this.localPlayerIndex = localPlayerIndex
+    this.seatRadius = computeSeatRadius(maxPlayers)
     this.initialCardPositions = initialCardPositions
     // Initialise foundation state: use server state if available, else all empty slots
     this.localFoundationState =
@@ -200,7 +211,7 @@ export class NertzGame {
     window.addEventListener("resize", this.onResize)
     this.dragControls.attach()
 
-    const localSeat = computeSeat(this.localPlayerIndex, this.maxPlayers, SEAT_RADIUS)
+    const localSeat = computeSeat(this.localPlayerIndex, this.maxPlayers, this.seatRadius)
     this.radialX = Math.sin(localSeat.angle)
     this.radialZ = Math.cos(localSeat.angle)
     this.positionCamera()
@@ -361,7 +372,7 @@ export class NertzGame {
 
   /** Positions the camera behind and above the local player, angled toward the table center */
   private positionCamera(extraOffset = 0): void {
-    const dist = SEAT_RADIUS + CAMERA_BEHIND_DISTANCE + extraOffset
+    const dist = this.seatRadius + CAMERA_BEHIND_DISTANCE + extraOffset
     this.camera.position.set(
       this.radialX * dist,
       CAMERA_ANGLE_HEIGHT + extraOffset * 0.5,
@@ -393,7 +404,7 @@ export class NertzGame {
 
   private refreshTable() {
     if (this.table) this.scene.remove(this.table)
-    this.table = new Table(SEAT_RADIUS + 2)
+    this.table = new Table(this.seatRadius + 2)
     this.scene.add(this.table)
   }
 
@@ -419,7 +430,7 @@ export class NertzGame {
     if (!this.deckGlbScene) return
     const deckIndex = this.playerDecks.length
     const isLocalPlayer = deckIndex === this.localPlayerIndex
-    const seat = computeSeat(deckIndex, this.maxPlayers, SEAT_RADIUS)
+    const seat = computeSeat(deckIndex, this.maxPlayers, this.seatRadius)
 
     const deck = new PlayerDeck(deckIndex)
     deck.buildFromGLB(this.deckGlbScene, this.scene, seat)
@@ -431,7 +442,7 @@ export class NertzGame {
       const hasPositions = this.applyInitialPositions(deck)
       if (hasPositions) {
         this.positionCamera()
-        this.localPilePositions = computeDealPiles(seat, SEAT_RADIUS, PILE_OFFSET)
+        this.localPilePositions = computeDealPiles(seat, this.seatRadius, PILE_OFFSET)
         this.updateDraggableCards()
         this.registerWorkPilesWithDragControls()
         this.registerStockWithDragControls()
@@ -463,8 +474,8 @@ export class NertzGame {
 
     const match = cardId.match(/^p(\d+)_/)
     if (!match) return Math.PI
-    const seat = computeSeat(parseInt(match[1]), this.maxPlayers, SEAT_RADIUS)
-    const piles = computeDealPiles(seat, SEAT_RADIUS, PILE_OFFSET)
+    const seat = computeSeat(parseInt(match[1]), this.maxPlayers, this.seatRadius)
+    const piles = computeDealPiles(seat, this.seatRadius, PILE_OFFSET)
     // Nertz pile, work pile bases, and waste pile are face-up on initial deal
     for (let i = PILE_NERTZ; i <= PILE_WASTE; i++) {
       if (Math.abs(x - piles[i].x) < 0.01 && Math.abs(z - piles[i].z) < 0.01) return 0
@@ -662,8 +673,8 @@ export class NertzGame {
   private computeCardFanY(cardId: string, x: number, z: number): number {
     const match = cardId.match(/^p(\d+)_/)
     if (!match) return 0
-    const seat = computeSeat(parseInt(match[1]), this.maxPlayers, SEAT_RADIUS)
-    const piles = computeDealPiles(seat, SEAT_RADIUS, PILE_OFFSET)
+    const seat = computeSeat(parseInt(match[1]), this.maxPlayers, this.seatRadius)
+    const piles = computeDealPiles(seat, this.seatRadius, PILE_OFFSET)
     const fanDirX = Math.sin(seat.angle)
     const fanDirZ = Math.cos(seat.angle)
 
@@ -1150,19 +1161,19 @@ export class NertzGame {
       this.shuffle.update(deltaTime)
       if (this.shuffle.isComplete) {
         const piles = this.localSeat
-          ? computeDealPiles(this.localSeat, SEAT_RADIUS, PILE_OFFSET)
+          ? computeDealPiles(this.localSeat, this.seatRadius, PILE_OFFSET)
           : []
         const fanDir = this.localSeat
           ? { x: Math.sin(this.localSeat.angle), z: Math.cos(this.localSeat.angle) }
           : { x: 0, z: 1 }
         // Camera starts close to the deal area, ends at the final angled position
-        const closerDist = SEAT_RADIUS + CAMERA_BEHIND_DISTANCE * 0.5
+        const closerDist = this.seatRadius + CAMERA_BEHIND_DISTANCE * 0.5
         const cameraStart = new THREE.Vector3(
           this.radialX * closerDist,
           CAMERA_ANGLE_HEIGHT * 0.7,
           this.radialZ * closerDist
         )
-        const finalDist = SEAT_RADIUS + CAMERA_BEHIND_DISTANCE
+        const finalDist = this.seatRadius + CAMERA_BEHIND_DISTANCE
         const cameraEnd = new THREE.Vector3(
           this.radialX * finalDist,
           CAMERA_ANGLE_HEIGHT,
@@ -1182,7 +1193,7 @@ export class NertzGame {
       if (this.intro.isComplete) {
         const localDeck = this.playerDecks[this.localPlayerIndex]
         if (localDeck && this.localSeat) {
-          this.localPilePositions = computeDealPiles(this.localSeat, SEAT_RADIUS, PILE_OFFSET)
+          this.localPilePositions = computeDealPiles(this.localSeat, this.seatRadius, PILE_OFFSET)
 
           // Build ordered pile state from the deal animation card order:
           //   cards[0..12]  → nertz pile (0=bottom, 12=top)
