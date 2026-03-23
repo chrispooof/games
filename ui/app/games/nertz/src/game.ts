@@ -8,6 +8,7 @@ import { PLAYER_BACK_COLORS, PlayerDeck, type Seat } from "./world/player-deck"
 import { DragControls, type ClientFoundationState } from "./controls/player"
 import { ShuffleAnimation } from "./scenes/shuffle"
 import { IntroAnimation } from "./scenes/intro"
+import { FlipStockAnimation } from "./scenes/flip-stock"
 import { computeSeat, computeDealPiles } from "./utils/geometry"
 import type { GameAction, ActionResult } from "./types/actions"
 import type { Card } from "../../shared/types/deck"
@@ -99,6 +100,7 @@ export class NertzGame {
   private dragControls!: DragControls
   private shuffle: ShuffleAnimation | null = null
   private intro: IntroAnimation | null = null
+  private stockFlipAnim: FlipStockAnimation | null = null
   private lastTime = performance.now()
   private totalTime = 0
   /** Total seats around the table */
@@ -548,6 +550,8 @@ export class NertzGame {
   private refreshLocalDisplay(): void {
     if (!this.localPileState || !this.localDeck || !this.localPilePositions || !this.localSeat)
       return
+    // Defer position updates while a stock flip animation owns the card positions
+    if (this.stockFlipAnim) return
 
     // Fan direction: toward player (positive radial) — cards extend downward on screen
     const fanDirX = Math.sin(this.localSeat.angle)
@@ -841,14 +845,10 @@ export class NertzGame {
         }
       }
     } else if (action.type === "flip-stock") {
-      if (this.localPileState.stock.length === 0) {
-        // Stock exhausted — cycle waste back to stock face-down
-        this.localPileState.stock = [...this.localPileState.waste].reverse()
-        this.localPileState.waste = []
-      } else {
-        const count = Math.min(3, this.localPileState.stock.length)
-        const flipped = this.localPileState.stock.splice(-count)
-        this.localPileState.waste.push(...flipped)
+      const anim = this.buildFlipStockAnimation()
+      if (anim) {
+        this.stockFlipAnim = anim
+        return // animation calls refreshLocalDisplay when complete
       }
     }
 
@@ -866,6 +866,63 @@ export class NertzGame {
     const action: GameAction = { type: "flip-stock" }
     this.pendingAction = action
     socket.emit("game-action", action)
+  }
+
+  // ---------------------------------------------------------------------------
+  // Private: flip-stock animation
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Captures current card positions, mutates `localPileState` for the flip-stock
+   * action, then creates a `FlipStockAnimation` to visually transition cards to
+   * their new positions. Returns null if prerequisites are missing.
+   */
+  private buildFlipStockAnimation(): FlipStockAnimation | null {
+    if (!this.localPileState || !this.localDeck || !this.localPilePositions) return null
+
+    const fanDirX = this.radialX
+    const fanDirZ = this.radialZ
+    const isRecycle = this.localPileState.stock.length === 0
+
+    if (isRecycle) {
+      // Capture waste card objects and their current 3D positions before state mutation
+      const wasteIds = [...this.localPileState.waste]
+      const wasteObjects = wasteIds
+        .map((id) => this.localDeck!.cards.find((c) => c.id === id)?.object)
+        .filter((o): o is THREE.Object3D => o !== undefined)
+
+      // Mutate state: cycle waste back to stock face-down
+      this.localPileState.stock = [...this.localPileState.waste].reverse()
+      this.localPileState.waste = []
+
+      const stockBase = this.localPilePositions[PILE_STOCK]
+      const animObjects = wasteObjects.map((obj, i) => ({
+        object: obj,
+        stockIdx: this.localPileState!.stock.indexOf(wasteIds[i]),
+      }))
+      return FlipStockAnimation.buildRecycle(animObjects, stockBase, fanDirX, fanDirZ)
+    } else {
+      // Capture the top `count` stock cards before state mutation
+      const count = Math.min(3, this.localPileState.stock.length)
+      const stockTopIds = this.localPileState.stock.slice(-count)
+      const stockObjects = stockTopIds
+        .map((id) => this.localDeck!.cards.find((c) => c.id === id)?.object)
+        .filter((o): o is THREE.Object3D => o !== undefined)
+      const existingWasteCount = this.localPileState.waste.length
+
+      // Mutate state: flip top cards to waste
+      const flipped = this.localPileState.stock.splice(-count)
+      this.localPileState.waste.push(...flipped)
+
+      const wasteBase = this.localPilePositions[PILE_WASTE]
+      return FlipStockAnimation.buildFlip(
+        stockObjects,
+        wasteBase,
+        existingWasteCount,
+        fanDirX,
+        fanDirZ
+      )
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -1260,6 +1317,14 @@ export class NertzGame {
           this.lastActionTime = performance.now()
           this.updateNertzCounter()
         }
+      }
+    }
+
+    if (this.stockFlipAnim && !this.stockFlipAnim.isComplete) {
+      this.stockFlipAnim.update(deltaTime)
+      if (this.stockFlipAnim.isComplete) {
+        this.stockFlipAnim = null
+        this.refreshLocalDisplay()
       }
     }
 
