@@ -59,7 +59,8 @@ describe("Button", () => {
   describe("isDisabled", () => {
     it("sets the disabled attribute", () => {
       render(<Button isDisabled>Click me</Button>)
-      expect(screen.getByRole("button").disabled).toBe(true)
+      const button = screen.getByRole("button") as HTMLButtonElement
+      expect(button.disabled).toBe(true)
     })
 
     it("applies reduced opacity", () => {
@@ -82,7 +83,8 @@ describe("Button", () => {
 
     it("disables the button while loading", () => {
       render(<Button isLoading>Click me</Button>)
-      expect(screen.getByRole("button").disabled).toBe(true)
+      const button = screen.getByRole("button") as HTMLButtonElement
+      expect(button.disabled).toBe(true)
     })
   })
 
