@@ -144,4 +144,36 @@ describe("DragControls", () => {
       expect(() => fireEvent(domElement, "mouseup")).not.toThrow()
     })
   })
+
+  describe("stock pile click", () => {
+    beforeEach(() => controls.attach())
+
+    it("fires onStockClick when clicking near stock pile with no picked card", () => {
+      const onStockClick = vi.fn()
+      controls.setStockPile({ x: 0, z: 0 }, onStockClick)
+      vi.mocked(THREE.Raycaster.prototype.intersectObjects).mockReturnValue([])
+
+      // intersectPlane is already stubbed to return (0, CARD_DRAG_Y, 0)
+      fireEvent(domElement, "mousedown")
+
+      expect(onStockClick).toHaveBeenCalledTimes(1)
+    })
+
+    it("does not fire onStockClick when click is outside stock snap radius", () => {
+      const onStockClick = vi.fn()
+      controls.setStockPile({ x: 0, z: 0 }, onStockClick)
+      vi.mocked(THREE.Raycaster.prototype.intersectObjects).mockReturnValue([])
+      vi.mocked(THREE.Ray.prototype.intersectPlane).mockImplementation(function (
+        _plane: THREE.Plane,
+        target: THREE.Vector3
+      ): THREE.Vector3 {
+        target.set(10, CARD_DRAG_Y, 10)
+        return target
+      })
+
+      fireEvent(domElement, "mousedown")
+
+      expect(onStockClick).not.toHaveBeenCalled()
+    })
+  })
 })
