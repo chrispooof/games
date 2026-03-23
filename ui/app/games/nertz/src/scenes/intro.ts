@@ -1,6 +1,6 @@
 import * as THREE from "three"
 import type { Card } from "../../../shared/types/deck"
-import { CAMERA_HEIGHT, CARD_Y_OFFSET, INTRO_CAMERA_HEIGHT } from "../utils/constants"
+import { CARD_Y_OFFSET } from "../utils/constants"
 
 /** Seconds each card takes to travel from its start position to its pile */
 const CARD_DEAL_DURATION = 0.08
@@ -42,6 +42,8 @@ export class IntroAnimation {
   private camera: THREE.PerspectiveCamera
   private assignments: CardAssignment[]
   private startPositions: THREE.Vector3[]
+  private cameraStart: THREE.Vector3
+  private cameraEnd: THREE.Vector3
   private currentIndex = 0
   private cardTimer = 0
   private cameraTimer = 0
@@ -59,18 +61,24 @@ export class IntroAnimation {
 
   /**
    * @param cards - Shuffled 52-card deck in deal order
-   * @param camera - Scene camera, zoomed out during the sequence
+   * @param camera - Scene camera, animated from cameraStart to cameraEnd during the deal
    * @param piles - Six world-space positions: [Nertz, Work1, Work2, Work3, Work4, Stock]
    * @param fanDir - Unit vector pointing from center toward the player's seat
+   * @param cameraStart - Camera position at the beginning of the intro
+   * @param cameraEnd - Camera position at the end of the intro
    */
   constructor(
     cards: Card[],
     camera: THREE.PerspectiveCamera,
     piles: Array<{ x: number; z: number }>,
-    fanDir: { x: number; z: number }
+    fanDir: { x: number; z: number },
+    cameraStart: THREE.Vector3,
+    cameraEnd: THREE.Vector3
   ) {
     this.cards = [...cards]
     this.camera = camera
+    this.cameraStart = cameraStart.clone()
+    this.cameraEnd = cameraEnd.clone()
     this.startPositions = cards.map((c) => c.object.position.clone())
     this.assignments = this.buildAssignments(cards.length, piles, fanDir)
   }
@@ -91,11 +99,12 @@ export class IntroAnimation {
     let stockIndex = 0
     return Array.from({ length: total }, (_, i) => {
       if (i < NERTZ_PILE_SIZE) {
+        const isTop = i === NERTZ_PILE_SIZE - 1
         return {
           targetX: piles[0].x + i * 0.005 * fanDir.x,
-          targetY: CARD_Y_OFFSET + i * 0.004,
+          targetY: CARD_Y_OFFSET + i * 0.004 + (isTop ? 0.01 : 0),
           targetZ: piles[0].z + i * 0.005 * fanDir.z,
-          faceUp: i === NERTZ_PILE_SIZE - 1, // only the top card is face-up
+          faceUp: isTop, // only the top card is face-up
         }
       }
       if (i < NERTZ_PILE_SIZE + WORK_PILE_COUNT) {
@@ -125,12 +134,12 @@ export class IntroAnimation {
     this.updateCard(dt)
   }
 
-  /** Smoothly zooms the camera out from CAMERA_HEIGHT to INTRO_CAMERA_HEIGHT */
+  /** Smoothly moves the camera from cameraStart to cameraEnd */
   private updateCamera(dt: number): void {
     if (this.cameraTimer >= CAMERA_ZOOM_DURATION) return
     this.cameraTimer = Math.min(CAMERA_ZOOM_DURATION, this.cameraTimer + dt)
     const t = ease(this.cameraTimer / CAMERA_ZOOM_DURATION)
-    this.camera.position.y = THREE.MathUtils.lerp(CAMERA_HEIGHT, INTRO_CAMERA_HEIGHT, t)
+    this.camera.position.lerpVectors(this.cameraStart, this.cameraEnd, t)
   }
 
   /**

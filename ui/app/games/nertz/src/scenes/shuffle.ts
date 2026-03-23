@@ -11,8 +11,8 @@ const COLLAPSE_ARC = 0.5
 
 /** Seconds for the pile to split into two halves */
 const SPLIT_DURATION = 0.22
-/** X distance each half slides from center */
-const SPLIT_OFFSET_X = 0.9
+/** Distance each half slides from center along the perpendicular direction */
+const SPLIT_OFFSET = 0.9
 
 /** Seconds between each card's riffle start */
 const RIFFLE_STAGGER = 0.015
@@ -32,7 +32,7 @@ const clamp01 = (t: number): number => Math.max(0, Math.min(1, t))
 /**
  * Animates a riffle shuffle sequence on a set of cards:
  *   1. Collapse — all cards fly from their grid positions to a center pile, flipping face-down
- *   2. Split    — the center pile divides into left and right halves
+ *   2. Split    — the center pile divides into two halves along the perpendicular direction
  *   3. Riffle   — cards interleave back to center (the actual shuffle merge)
  *
  * Phases 2–3 repeat `NUM_PASSES` times. After each riffle the `cards` array
@@ -50,16 +50,20 @@ export class ShuffleAnimation {
   /** World-space center that the pile collapses to and riffles around */
   private centerX: number
   private centerZ: number
+  /** Perpendicular direction for the split (unit vector) */
+  private perpX: number
+  private perpZ: number
 
   private phase: Phase = "collapse"
   private phaseTimer = 0
   private passCount = 0
 
   /**
-   * X coordinate each card in `this.cards` came from at the start of the
-   * current riffle phase. Populated by `beginRiffle()`.
+   * Per-card source positions (X and Z) at the start of each riffle phase.
+   * Populated by `beginRiffle()`.
    */
   private riffleSourceX: number[] = []
+  private riffleSourceZ: number[] = []
 
   isComplete = false
 
@@ -69,13 +73,16 @@ export class ShuffleAnimation {
 
   /**
    * @param cards - The deck to animate
-   * @param center - World-space point that cards collapse to and riffle around (default origin)
+   * @param center - World-space point that cards collapse to and riffle around
+   * @param perpDir - Direction to split along (perpendicular to the player's radial direction)
    */
-  constructor(cards: Card[], center = { x: 0, z: 0 }) {
+  constructor(cards: Card[], center = { x: 0, z: 0 }, perpDir = { x: 1, z: 0 }) {
     this.cards = [...cards]
     this.startPositions = cards.map((c) => c.object.position.clone())
     this.centerX = center.x
     this.centerZ = center.z
+    this.perpX = perpDir.x
+    this.perpZ = perpDir.z
   }
 
   update(dt: number): void {
@@ -127,15 +134,26 @@ export class ShuffleAnimation {
     const half = Math.floor(this.cards.length / 2)
 
     this.cards.forEach((card, i) => {
-      const offset = i < half ? -SPLIT_OFFSET_X : SPLIT_OFFSET_X
-      card.object.position.x = THREE.MathUtils.lerp(this.centerX, this.centerX + offset, t)
+      const sign = i < half ? -1 : 1
+      const offset = sign * SPLIT_OFFSET
+      card.object.position.x = THREE.MathUtils.lerp(
+        this.centerX,
+        this.centerX + offset * this.perpX,
+        t
+      )
+      card.object.position.z = THREE.MathUtils.lerp(
+        this.centerZ,
+        this.centerZ + offset * this.perpZ,
+        t
+      )
     })
 
     if (this.phaseTimer >= SPLIT_DURATION) {
-      // Snap and begin riffle
       const half = Math.floor(this.cards.length / 2)
       this.cards.forEach((card, i) => {
-        card.object.position.x = this.centerX + (i < half ? -SPLIT_OFFSET_X : SPLIT_OFFSET_X)
+        const sign = i < half ? -1 : 1
+        card.object.position.x = this.centerX + sign * SPLIT_OFFSET * this.perpX
+        card.object.position.z = this.centerZ + sign * SPLIT_OFFSET * this.perpZ
       })
       this.beginRiffle()
     }
@@ -148,8 +166,8 @@ export class ShuffleAnimation {
   /**
    * Performs the interleave merge: alternates taking one card from the left half
    * then one from the right half (with occasional adjacent pair swaps for
-   * realistic imperfection), records the source X for each card, and reorders
-   * `this.cards` to match the merged result.
+   * realistic imperfection), records the source position for each card, and
+   * reorders `this.cards` to match the merged result.
    */
   private beginRiffle(): void {
     const half = Math.floor(this.cards.length / 2)
@@ -157,17 +175,17 @@ export class ShuffleAnimation {
     const right = this.cards.slice(half)
 
     const merged: Card[] = []
-    const sources: number[] = []
+    const sources: number[] = [] // offset sign: -1 or +1
     const maxLen = Math.max(left.length, right.length)
 
     for (let i = 0; i < maxLen; i++) {
       if (i < left.length) {
         merged.push(left[i])
-        sources.push(-SPLIT_OFFSET_X)
+        sources.push(-SPLIT_OFFSET)
       }
       if (i < right.length) {
         merged.push(right[i])
-        sources.push(SPLIT_OFFSET_X)
+        sources.push(SPLIT_OFFSET)
       }
     }
 
@@ -182,8 +200,9 @@ export class ShuffleAnimation {
     for (let i = 0; i < merged.length; i++) {
       this.cards[i] = merged[i]
     }
-    // Shift source X values to be relative to the seat center
-    this.riffleSourceX = sources.map((srcOffset) => this.centerX + srcOffset)
+    // Compute source positions along the perpendicular direction
+    this.riffleSourceX = sources.map((off) => this.centerX + off * this.perpX)
+    this.riffleSourceZ = sources.map((off) => this.centerZ + off * this.perpZ)
 
     this.transition("riffle")
   }
@@ -196,10 +215,10 @@ export class ShuffleAnimation {
       if (t <= 0) return
 
       const te = ease(t)
-      const srcX = this.riffleSourceX[i]
       const targetY = CARD_Y_OFFSET + i * 0.0005
 
-      card.object.position.x = THREE.MathUtils.lerp(srcX, this.centerX, te)
+      card.object.position.x = THREE.MathUtils.lerp(this.riffleSourceX[i], this.centerX, te)
+      card.object.position.z = THREE.MathUtils.lerp(this.riffleSourceZ[i], this.centerZ, te)
       card.object.position.y = targetY + RIFFLE_ARC * Math.sin(t * Math.PI)
     })
 

@@ -1,6 +1,13 @@
 import * as THREE from "three"
 import { Card } from "../../../shared/types/deck"
-import { CARD_DRAG_Y, CARD_Y_OFFSET, FOUNDATION_SNAP_RADIUS } from "../utils/constants"
+import {
+  CARD_DRAG_Y,
+  CARD_Y_OFFSET,
+  FOUNDATION_CARD_SCALE,
+  FOUNDATION_SNAP_RADIUS,
+  HOVER_LIFT_Y,
+  HOVER_SCALE,
+} from "../utils/constants"
 import type { FoundationSlot } from "../world/foundations"
 
 /**
@@ -141,6 +148,13 @@ export class DragControls {
    */
   private cardGroups = new Map<string, Card[]>()
 
+  /** The card currently under the cursor (hover effect active) */
+  private hoveredCard: Card | null = null
+  /** Original scale of the hovered card before scaling up */
+  private hoverOriginalScale: THREE.Vector3 | null = null
+  /** Original Y position of the hovered card before lifting */
+  private hoverOriginalY = 0
+
   /**
    * Fired after a card group is dropped.
    * `cardId` — root card (bottom of dragged group)
@@ -277,6 +291,15 @@ export class DragControls {
     )
   }
 
+  /** Restores the hovered card to its original scale and Y position */
+  private clearHover(): void {
+    if (!this.hoveredCard) return
+    this.hoveredCard.object.scale.copy(this.hoverOriginalScale!)
+    this.hoveredCard.object.position.y = this.hoverOriginalY
+    this.hoveredCard = null
+    this.hoverOriginalScale = null
+  }
+
   /** Casts a ray from NDC coordinates and returns the intersection point on the drag plane */
   private raycastPlane(ndc: THREE.Vector2): THREE.Vector3 | null {
     this.raycaster.setFromCamera(ndc, this.camera)
@@ -285,6 +308,8 @@ export class DragControls {
   }
 
   private onMouseDown = (event: MouseEvent) => {
+    this.clearHover()
+
     const ndc = this.getNDC(event)
     this.raycaster.setFromCamera(ndc, this.camera)
 
@@ -340,21 +365,48 @@ export class DragControls {
   }
 
   private onMouseMove = (event: MouseEvent) => {
-    if (!this.draggingGroup.length) return
+    // Active drag — move the group
+    if (this.draggingGroup.length) {
+      const planePoint = this.raycastPlane(this.getNDC(event))
+      if (!planePoint) return
 
-    const planePoint = this.raycastPlane(this.getNDC(event))
-    if (!planePoint) return
+      const root = this.draggingGroup[0]
+      const rootPreDrag = this.preDragPositions.get(root.id)!
+      const newRootX = planePoint.x - this.dragOffset.x
+      const newRootZ = planePoint.z - this.dragOffset.z
 
-    const root = this.draggingGroup[0]
-    const rootPreDrag = this.preDragPositions.get(root.id)!
-    const newRootX = planePoint.x - this.dragOffset.x
-    const newRootZ = planePoint.z - this.dragOffset.z
+      for (const gc of this.draggingGroup) {
+        const preDrag = this.preDragPositions.get(gc.id)!
+        gc.object.position.x = newRootX + (preDrag.x - rootPreDrag.x)
+        gc.object.position.z = newRootZ + (preDrag.z - rootPreDrag.z)
+      }
+      return
+    }
 
-    // Move each card in the group, maintaining their XZ offsets relative to root
-    for (const gc of this.draggingGroup) {
-      const preDrag = this.preDragPositions.get(gc.id)!
-      gc.object.position.x = newRootX + (preDrag.x - rootPreDrag.x)
-      gc.object.position.z = newRootZ + (preDrag.z - rootPreDrag.z)
+    // No drag — hover detection
+    const ndc = this.getNDC(event)
+    this.raycaster.setFromCamera(ndc, this.camera)
+    const cardObjects = this.cards.flatMap((c) => (c.object ? [c.object] : []))
+    const [hit] = this.raycaster.intersectObjects(cardObjects, true)
+    const newHovered = hit ? this.resolveCard(hit.object) : null
+
+    if (newHovered === this.hoveredCard) return
+
+    // Restore previous hover
+    this.clearHover()
+
+    // Apply hover only to tip cards (top of pile). Middle cards in a work pile
+    // fan have a cardGroup with length > 1, meaning other cards sit above them.
+    if (newHovered) {
+      const group = this.cardGroups.get(newHovered.id)
+      const isTip = !group || group.length <= 1
+      if (isTip) {
+        this.hoveredCard = newHovered
+        this.hoverOriginalScale = newHovered.object.scale.clone()
+        this.hoverOriginalY = newHovered.object.position.y
+        newHovered.object.scale.multiplyScalar(HOVER_SCALE)
+        newHovered.object.position.y += HOVER_LIFT_Y
+      }
     }
   }
 
@@ -450,6 +502,8 @@ export class DragControls {
     root.object.position.z = pz
     root.object.position.y = CARD_Y_OFFSET
     if (snapAngle !== null) root.object.rotation.y = snapAngle
+    // Scale up cards on foundations for readability; reset scale otherwise
+    root.object.scale.setScalar(snappedFoundationIndex !== null ? FOUNDATION_CARD_SCALE : 1)
 
     // Place the rest of the group relative to root, maintaining their source offsets
     for (let i = 1; i < this.draggingGroup.length; i++) {

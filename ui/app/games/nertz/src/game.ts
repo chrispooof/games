@@ -4,7 +4,7 @@ import { socket } from "~/lib/socket"
 import deckUrl from "~/assets/deck.glb?url"
 import { Table } from "./world/terrain"
 import { FoundationArea } from "./world/foundations"
-import { PlayerDeck, type Seat } from "./world/player-deck"
+import { PLAYER_BACK_COLORS, PlayerDeck, type Seat } from "./world/player-deck"
 import { DragControls, type ClientFoundationState } from "./controls/player"
 import { ShuffleAnimation } from "./scenes/shuffle"
 import { IntroAnimation } from "./scenes/intro"
@@ -15,17 +15,22 @@ import {
   AMBIENT_LIGHT_COLOR,
   AMBIENT_LIGHT_INTENSITY,
   CARD_Y_OFFSET,
+  CAMERA_ANGLE_HEIGHT,
+  CAMERA_BEHIND_DISTANCE,
   CAMERA_FOV,
-  CAMERA_HEIGHT,
-  INTRO_CAMERA_HEIGHT,
+  CAMERA_LOOKAT_FORWARD,
   DIR_LIGHT_COLOR,
   DIR_LIGHT_HEIGHT,
   DIR_LIGHT_INTENSITY,
   MAX_DELTA_TIME,
   PILE_OFFSET,
   RANK_VALUES,
+  IDLE_HINT_DELAY_MS,
+  PLAYABLE_GLOW_COLOR,
+  PLAYABLE_GLOW_INTENSITY,
   SCENE_BACKGROUND_COLOR,
   SEAT_RADIUS,
+  FOUNDATION_CARD_SCALE,
   SHADOW_CAM_EXTENT,
   SHADOW_CAM_FAR,
   SHADOW_CAM_NEAR,
@@ -105,22 +110,36 @@ export class NertzGame {
   /** In-flight typed action awaiting an `action-result` response */
   private pendingAction: GameAction | null = null
 
-  // ---------------------------------------------------------------------------
-  // Magnifier (picture-in-picture zoom view)
-  // ---------------------------------------------------------------------------
+  /** Radial direction components from center toward local player's seat */
+  private radialX = 0
+  private radialZ = 1
 
-  /** Orthographic camera that renders the zoomed view in the bottom-left corner */
-  private magnifierCamera: THREE.OrthographicCamera | null = null
-  /** DOM overlay providing the border frame for the magnifier */
-  private magnifierEl: HTMLDivElement | null = null
-  /** World-space XZ position under the mouse cursor — updated every mousemove */
-  private mouseWorldPos = { x: 0, z: 0 }
-  /** Reusable raycaster for mouse-to-world projection in the magnifier */
-  private readonly magRaycaster = new THREE.Raycaster()
-  private readonly magPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0)
-  private readonly magTarget = new THREE.Vector3()
-  /** Side length of the magnifier viewport in CSS pixels */
-  private readonly MINI_PX = 240
+  /** DOM element showing the nertz pile remaining card count */
+  private nertzCountEl: HTMLDivElement | null = null
+
+  /** Timestamp of last successful player action — used for idle hint delay */
+  private lastActionTime = 0
+  /** Whether playable card highlights are currently active */
+  private hintsActive = false
+
+  /** DOM elements for opponent nertz count badges, keyed by playerId */
+  private opponentEls = new Map<string, HTMLDivElement>()
+  /** Ordered list of player IDs (set externally via route) */
+  private playerIds: string[] = []
+  /** Local player's ID */
+  private localPlayerId = ""
+
+  /** Offscreen renderer for capturing card face images */
+  private miniRenderer: THREE.WebGLRenderer | null = null
+  /** Offscreen scene containing a single card for snapshot rendering */
+  private miniScene: THREE.Scene | null = null
+  /** Orthographic camera sized to frame one card for the mini renderer */
+  private miniCamera: THREE.OrthographicCamera | null = null
+  /** Cached data-URL images of rendered card faces, keyed by card ID */
+  private cardImageCache = new Map<string, string>()
+  /** Last received opponent counts/tops — re-applied after decks load */
+  private lastOpponentCounts: Record<string, number> | null = null
+  private lastOpponentTops: Record<string, string | null> | null = null
 
   /**
    * @param container - The DOM element that will host the WebGL canvas
@@ -182,59 +201,178 @@ export class NertzGame {
     this.dragControls.attach()
 
     const localSeat = computeSeat(this.localPlayerIndex, this.maxPlayers, SEAT_RADIUS)
-    this.camera.position.set(0, CAMERA_HEIGHT, 0)
-    this.camera.up.set(-Math.sin(localSeat.angle), 0, -Math.cos(localSeat.angle))
-    this.camera.lookAt(0, 0, 0)
+    this.radialX = Math.sin(localSeat.angle)
+    this.radialZ = Math.cos(localSeat.angle)
+    this.positionCamera()
 
     this.renderer.setSize(this.container.clientWidth, this.container.clientHeight)
     this.renderer.setPixelRatio(window.devicePixelRatio)
     this.renderer.shadowMap.enabled = true
-    this.renderer.autoClear = false
-    this.setupMagnifier()
-    this.renderer.domElement.addEventListener("mousemove", this.onMouseMoveGlobal)
+    this.setupNertzCounter()
+    this.setupMiniRenderer()
     this.renderer.setAnimationLoop(() => this.update())
   }
 
-  /**
-   * Creates the magnifier DOM frame and orthographic camera.
-   * The WebGL viewport renders content inside the frame; the DOM element provides styling.
-   */
-  private setupMagnifier(): void {
-    const size = this.MINI_PX
+  /** Creates the nertz pile card count badge overlay */
+  private setupNertzCounter(): void {
     const el = document.createElement("div")
     el.style.cssText =
-      `position:absolute;bottom:10px;left:10px;width:${size}px;height:${size}px;` +
-      `border-radius:8px;border:2px solid rgba(255,255,255,0.35);` +
-      `box-shadow:0 4px 14px rgba(0,0,0,0.65);pointer-events:none;overflow:hidden;`
-    const label = document.createElement("div")
-    label.style.cssText =
-      "position:absolute;bottom:4px;right:6px;" +
-      "color:rgba(255,255,255,0.45);font-size:10px;font-family:monospace;user-select:none;"
-    label.textContent = "zoom"
-    el.appendChild(label)
+      "position:absolute;pointer-events:none;user-select:none;" +
+      "background:rgba(0,0,0,0.7);color:#fff;font-weight:bold;font-size:14px;" +
+      "padding:2px 8px;border-radius:10px;backdrop-filter:blur(4px);" +
+      "border:1px solid rgba(255,255,255,0.2);display:none;"
     this.container.style.position = "relative"
     this.container.appendChild(el)
-    this.magnifierEl = el
+    this.nertzCountEl = el
+  }
 
-    // Orthographic camera: extent ±0.5 world units → shows a 1.0×1.0 area (~1.5 cards wide)
-    const ext = 0.5
-    this.magnifierCamera = new THREE.OrthographicCamera(-ext, ext, ext, -ext, 0.1, 20)
+  /** Creates a tiny offscreen WebGL renderer + scene for snapshotting card faces */
+  private setupMiniRenderer(): void {
+    const w = 140
+    const h = 196
+    this.miniRenderer = new THREE.WebGLRenderer({
+      antialias: true,
+      alpha: true,
+      preserveDrawingBuffer: true,
+    })
+    this.miniRenderer.setSize(w, h)
+    this.miniScene = new THREE.Scene()
+    const hw = 0.63 / 2
+    const hh = 0.88 / 2
+    this.miniCamera = new THREE.OrthographicCamera(-hw, hw, hh, -hh, 0.1, 10)
+    this.miniCamera.position.set(0, 2, 0)
+    this.miniCamera.lookAt(0, 0, 0)
+    this.miniScene.add(new THREE.AmbientLight(0xffffff, 2))
   }
 
   /**
-   * Tracks the world-space XZ position under the cursor so the magnifier can follow it.
-   * Raycasts against the table plane (y = 0).
+   * Renders a card face to a data-URL image using the offscreen mini renderer.
+   * Results are cached so each card is only rendered once.
    */
-  private onMouseMoveGlobal = (event: MouseEvent) => {
-    const rect = this.renderer.domElement.getBoundingClientRect()
-    const ndc = new THREE.Vector2(
-      ((event.clientX - rect.left) / rect.width) * 2 - 1,
-      -((event.clientY - rect.top) / rect.height) * 2 + 1
-    )
-    this.magRaycaster.setFromCamera(ndc, this.camera)
-    if (this.magRaycaster.ray.intersectPlane(this.magPlane, this.magTarget)) {
-      this.mouseWorldPos = { x: this.magTarget.x, z: this.magTarget.z }
+  private renderCardImage(cardId: string): string | null {
+    if (this.cardImageCache.has(cardId)) return this.cardImageCache.get(cardId)!
+    if (!this.miniRenderer || !this.miniScene || !this.miniCamera) return null
+    const card = this.playerDecks.flatMap((d) => d.cards).find((c) => c.id === cardId)
+    if (!card) return null
+
+    const clone = card.object.clone(true)
+    clone.position.set(0, 0, 0)
+    clone.rotation.set(0, 0, 0)
+    clone.visible = true
+    this.miniScene.add(clone)
+    this.miniRenderer.render(this.miniScene, this.miniCamera)
+    const dataUrl = this.miniRenderer.domElement.toDataURL()
+    this.miniScene.remove(clone)
+    this.cardImageCache.set(cardId, dataUrl)
+    return dataUrl
+  }
+
+  /** Projects a world position to screen coordinates and updates the nertz count badge */
+  private updateNertzCounter(): void {
+    if (!this.nertzCountEl || !this.localPileState || !this.localPilePositions) return
+    const count = this.localPileState.nertzPile.length
+    this.nertzCountEl.textContent = `${count}`
+    this.nertzCountEl.style.display = count > 0 ? "" : "none"
+
+    const nertzBase = this.localPilePositions[0]
+    const pos = new THREE.Vector3(nertzBase.x, 0.5, nertzBase.z)
+    pos.project(this.camera)
+    const cw = this.container.clientWidth
+    const ch = this.container.clientHeight
+    const sx = (pos.x * 0.5 + 0.5) * cw
+    const sy = (-pos.y * 0.5 + 0.5) * ch
+    this.nertzCountEl.style.transform = `translate(${sx - 16}px, ${sy - 24}px)`
+  }
+
+  /**
+   * Sets ordered player IDs and local player ID so opponent overlays can be created.
+   * Call after construction from the route component.
+   */
+  setPlayerIds(playerIds: string[], localPlayerId: string): void {
+    this.playerIds = playerIds
+    this.localPlayerId = localPlayerId
+    this.setupOpponentOverlays()
+  }
+
+  /** Creates DOM badge elements for each non-local player at the top of the screen */
+  private setupOpponentOverlays(): void {
+    for (const el of this.opponentEls.values()) el.remove()
+    this.opponentEls.clear()
+
+    const opponents = this.playerIds
+      .map((id, i) => ({ id, index: i }))
+      .filter((p) => p.id !== this.localPlayerId)
+
+    opponents.forEach((opp, i) => {
+      const el = document.createElement("div")
+      const color = PLAYER_BACK_COLORS[opp.index % PLAYER_BACK_COLORS.length]
+      const hex = `#${color.toString(16).padStart(6, "0")}`
+      el.style.cssText =
+        "position:absolute;top:48px;pointer-events:none;user-select:none;" +
+        "display:flex;align-items:center;gap:10px;" +
+        "background:rgba(0,0,0,0.75);color:#fff;font-weight:bold;" +
+        "padding:6px 12px;border-radius:14px;backdrop-filter:blur(4px);" +
+        `border:2px solid ${hex};`
+      el.style.left = "50%"
+      el.style.transform = `translateX(calc(-50% + ${(i - (opponents.length - 1) / 2) * 150}px))`
+
+      // Rendered card image
+      const img = document.createElement("img")
+      img.setAttribute("data-card-img", "")
+      img.style.cssText =
+        "width:48px;height:67px;border-radius:4px;" +
+        "box-shadow:0 2px 6px rgba(0,0,0,0.4);background:#555;display:block;"
+      el.appendChild(img)
+
+      // Nertz pile count
+      const count = document.createElement("span")
+      count.setAttribute("data-count", "")
+      count.textContent = "13"
+      count.style.cssText = "font-size:20px;min-width:22px;text-align:center;"
+      el.appendChild(count)
+
+      this.container.appendChild(el)
+      this.opponentEls.set(opp.id, el)
+    })
+  }
+
+  /**
+   * Updates opponent nertz pile counts and top card image from server broadcast.
+   * Called by the route when a `game-state-update` includes `nertzCounts`.
+   */
+  updateOpponentCounts(counts: Record<string, number>, tops?: Record<string, string | null>): void {
+    this.lastOpponentCounts = counts
+    if (tops) this.lastOpponentTops = tops
+    for (const [playerId, el] of this.opponentEls) {
+      const count = counts[playerId]
+      if (count === undefined) continue
+      const countSpan = el.querySelector("[data-count]") as HTMLSpanElement | null
+      if (countSpan) countSpan.textContent = `${count}`
+      if (tops) {
+        const topCardId = tops[playerId]
+        const img = el.querySelector("[data-card-img]") as HTMLImageElement | null
+        if (img && topCardId) {
+          const dataUrl = this.renderCardImage(topCardId)
+          if (dataUrl) img.src = dataUrl
+        }
+      }
     }
+  }
+
+  /** Positions the camera behind and above the local player, angled toward the table center */
+  private positionCamera(extraOffset = 0): void {
+    const dist = SEAT_RADIUS + CAMERA_BEHIND_DISTANCE + extraOffset
+    this.camera.position.set(
+      this.radialX * dist,
+      CAMERA_ANGLE_HEIGHT + extraOffset * 0.5,
+      this.radialZ * dist
+    )
+    this.camera.up.set(0, 1, 0)
+    this.camera.lookAt(
+      this.radialX * CAMERA_LOOKAT_FORWARD,
+      0,
+      this.radialZ * CAMERA_LOOKAT_FORWARD
+    )
   }
 
   /** Adds a directional key light and ambient fill light to the scene */
@@ -255,7 +393,7 @@ export class NertzGame {
 
   private refreshTable() {
     if (this.table) this.scene.remove(this.table)
-    this.table = new Table(SEAT_RADIUS + 3)
+    this.table = new Table(SEAT_RADIUS + 2)
     this.scene.add(this.table)
   }
 
@@ -264,6 +402,10 @@ export class NertzGame {
       this.deckGlbScene = deckGlb.scene
       for (let i = 0; i < this.initialDeckCount; i++) {
         this.addPlayer()
+      }
+      // Re-apply opponent counts now that card meshes are available for rendering
+      if (this.lastOpponentCounts) {
+        this.updateOpponentCounts(this.lastOpponentCounts, this.lastOpponentTops ?? undefined)
       }
     })
   }
@@ -288,13 +430,14 @@ export class NertzGame {
       this.localSeat = seat
       const hasPositions = this.applyInitialPositions(deck)
       if (hasPositions) {
-        this.camera.position.y = INTRO_CAMERA_HEIGHT
+        this.positionCamera()
         this.localPilePositions = computeDealPiles(seat, SEAT_RADIUS, PILE_OFFSET)
         this.updateDraggableCards()
         this.registerWorkPilesWithDragControls()
         this.registerStockWithDragControls()
       } else {
-        this.shuffle = new ShuffleAnimation(deck.cards, { x: seat.x, z: seat.z })
+        const perpDir = { x: Math.cos(seat.angle), z: -Math.sin(seat.angle) }
+        this.shuffle = new ShuffleAnimation(deck.cards, { x: seat.x, z: seat.z }, perpDir)
       }
     } else {
       const hasPositions = this.applyInitialPositions(deck)
@@ -382,12 +525,13 @@ export class NertzGame {
     this.localPileState.nertzPile.forEach((cardId, i) => {
       const card = this.localDeck!.cards.find((c) => c.id === cardId)
       if (!card) return
+      const isTop = cardId === nertzTop
       card.object.position.set(
         nertzBase.x + i * 0.005 * fanDirX,
-        CARD_Y_OFFSET + i * 0.004,
+        CARD_Y_OFFSET + i * 0.004 + (isTop ? 0.01 : 0),
         nertzBase.z + i * 0.005 * fanDirZ
       )
-      card.object.rotation.z = cardId === nertzTop ? 0 : Math.PI
+      card.object.rotation.z = isTop ? 0 : Math.PI
     })
 
     // Work piles: fanned face-up toward center; each card offset by WORK_PILE_FAN_OFFSET
@@ -436,28 +580,36 @@ export class NertzGame {
       card.object.rotation.z = Math.PI // face-down
     })
 
-    // Camera: zoom out as work piles grow (0.5 units per card beyond depth 3)
+    // Camera: pull back as work piles grow (0.3 units per card beyond depth 3)
     const maxDepth = Math.max(...this.localPileState.workPiles.map((p) => p.length))
-    const extraHeight = Math.max(0, maxDepth - 3) * 0.5
-    this.camera.position.y = Math.min(INTRO_CAMERA_HEIGHT + extraHeight, 22)
+    const extraOffset = Math.max(0, maxDepth - 3) * 0.3
+    this.positionCamera(extraOffset)
 
     this.updateDraggableCards()
     this.registerWorkPilesWithDragControls()
+    this.updateNertzCounter()
   }
 
   private applyInitialPositions(deck: PlayerDeck): boolean {
     if (!this.initialCardPositions) return false
+    const isLocal = deck.playerIndex === this.localPlayerIndex
     let applied = false
     for (const card of deck.cards) {
       const pos = this.initialCardPositions[card.id]
       if (pos) {
-        card.object.visible = true
         card.object.position.x = pos.x
         card.object.position.z = pos.z
         card.object.position.y = CARD_Y_OFFSET + this.computeCardFanY(card.id, pos.x, pos.z)
         card.object.rotation.z = this.getFaceRotation(card.id, pos.x, pos.z)
         const foundationAngle = this.getFoundationAngle(pos.x, pos.z)
-        if (foundationAngle !== null) card.object.rotation.y = foundationAngle
+        if (foundationAngle !== null) {
+          card.object.rotation.y = foundationAngle
+          card.object.scale.setScalar(FOUNDATION_CARD_SCALE)
+          card.object.visible = true
+        } else {
+          card.object.scale.setScalar(1)
+          card.object.visible = isLocal
+        }
         applied = true
       }
     }
@@ -479,16 +631,25 @@ export class NertzGame {
       this.dragControls.setFoundationStates(this.localFoundationState)
     }
     for (const deck of this.playerDecks) {
+      // Local player cards are managed by refreshLocalDisplay — skip them here
+      // to avoid stale server positions overwriting current local state
+      if (deck === this.localDeck) continue
       for (const card of deck.cards) {
         const pos = positions[card.id]
         if (pos) {
-          card.object.visible = true
           card.object.position.x = pos.x
           card.object.position.z = pos.z
           card.object.position.y = CARD_Y_OFFSET + this.computeCardFanY(card.id, pos.x, pos.z)
           card.object.rotation.z = this.getFaceRotation(card.id, pos.x, pos.z)
           const foundationAngle = this.getFoundationAngle(pos.x, pos.z)
-          if (foundationAngle !== null) card.object.rotation.y = foundationAngle
+          if (foundationAngle !== null) {
+            card.object.rotation.y = foundationAngle
+            card.object.scale.setScalar(FOUNDATION_CARD_SCALE)
+            card.object.visible = true // Foundation cards always visible
+          } else {
+            card.object.scale.setScalar(1)
+            card.object.visible = false // Remote player non-foundation cards hidden
+          }
         }
       }
     }
@@ -496,9 +657,7 @@ export class NertzGame {
 
   /**
    * Computes the y-offset above CARD_Y_OFFSET for a card at the given world position.
-   * For cards fanned along a work pile, returns `fanIndex * 0.01` so each card in
-   * the fan sits slightly above the previous — preventing z-fighting.
-   * Returns 0 for all other positions (stacked piles, foundation, etc.)
+   * Handles nertz pile, stock pile, and work pile stacking to prevent z-fighting.
    */
   private computeCardFanY(cardId: string, x: number, z: number): number {
     const match = cardId.match(/^p(\d+)_/)
@@ -507,6 +666,28 @@ export class NertzGame {
     const piles = computeDealPiles(seat, SEAT_RADIUS, PILE_OFFSET)
     const fanDirX = Math.sin(seat.angle)
     const fanDirZ = Math.cos(seat.angle)
+
+    // Nertz pile (index 0): staggered 0.005 along fanDir, Y += i * 0.004
+    const nertzBase = piles[PILE_NERTZ]
+    const ndx = x - nertzBase.x
+    const ndz = z - nertzBase.z
+    const nProj = ndx * fanDirX + ndz * fanDirZ
+    const nPerpDist = Math.sqrt((ndx - nProj * fanDirX) ** 2 + (ndz - nProj * fanDirZ) ** 2)
+    if (nProj >= -0.01 && nProj <= 13 * 0.005 + 0.01 && nPerpDist < 0.1) {
+      return Math.round(nProj / 0.005) * 0.004
+    }
+
+    // Stock pile (index 6): same stagger pattern as nertz
+    const stockBase = piles[PILE_STOCK]
+    const sdx = x - stockBase.x
+    const sdz = z - stockBase.z
+    const sProj = sdx * fanDirX + sdz * fanDirZ
+    const sPerpDist = Math.sqrt((sdx - sProj * fanDirX) ** 2 + (sdz - sProj * fanDirZ) ** 2)
+    if (sProj >= -0.01 && sProj <= 35 * 0.005 + 0.01 && sPerpDist < 0.1) {
+      return Math.round(sProj / 0.005) * 0.004
+    }
+
+    // Work piles (indices 1–4): fanned with WORK_PILE_FAN_OFFSET spacing
     for (let wi = 0; wi < 4; wi++) {
       const base = piles[PILE_WORK_START + wi]
       const dx = x - base.x
@@ -534,7 +715,10 @@ export class NertzGame {
     card.object.position.x = action.position.x
     card.object.position.z = action.position.z
     const foundationAngle = this.getFoundationAngle(action.position.x, action.position.z)
-    if (foundationAngle !== null) card.object.rotation.y = foundationAngle
+    if (foundationAngle !== null) {
+      card.object.rotation.y = foundationAngle
+      card.object.scale.setScalar(FOUNDATION_CARD_SCALE)
+    }
   }
 
   /**
@@ -557,9 +741,15 @@ export class NertzGame {
 
     if (!action || !this.localPileState) return
 
+    this.lastActionTime = performance.now()
+    if (this.hintsActive) this.clearPlayableHighlights()
+
     if (action.type === "play-to-foundation" || action.type === "play-to-work-pile") {
       this.removeFromLocalPile(action.source, action.sourceIndex, action.cardId)
       if (action.type === "play-to-foundation") {
+        // Scale up the card on the foundation for readability
+        const foundationCard = this.localDeck?.cards.find((c) => c.id === action.cardId)
+        if (foundationCard) foundationCard.object.scale.setScalar(FOUNDATION_CARD_SCALE)
         // Update local foundation state so DragControls can smart-snap to the right slot
         const match = action.cardId.match(/^p\d+_Card_(.+)_(\w+)$/)
         if (match) {
@@ -620,6 +810,8 @@ export class NertzGame {
    */
   flipStock(): void {
     if (!this.localPileState) return
+    this.lastActionTime = performance.now()
+    if (this.hintsActive) this.clearPlayableHighlights()
     const action: GameAction = { type: "flip-stock" }
     this.pendingAction = action
     socket.emit("game-action", action)
@@ -842,6 +1034,102 @@ export class NertzGame {
   }
 
   // ---------------------------------------------------------------------------
+  // Playable card highlighting (idle hint)
+  // ---------------------------------------------------------------------------
+
+  /** Suit color groups for alternating-color validation on work piles */
+  private static readonly RED_SUITS = new Set(["Hearts", "Diamonds"])
+
+  /**
+   * Checks whether a card (by ID) can legally play on any foundation or work pile.
+   * Used by the idle hint system to highlight playable cards after inactivity.
+   */
+  private isCardPlayable(cardId: string): boolean {
+    const info = this.parseCardInfo(cardId)
+    if (!info) return false
+
+    // Check foundations: Ace on empty, or same suit + next rank
+    for (const fs of this.localFoundationState) {
+      if (
+        (fs.topValue === 0 && info.value === 1) ||
+        (fs.suit === info.suit && info.value === fs.topValue + 1)
+      ) {
+        return true
+      }
+    }
+
+    // Check work piles: alternating color + descending rank, or any card on empty pile
+    if (!this.localPileState) return false
+    for (const pile of this.localPileState.workPiles) {
+      if (pile.length === 0) return true
+      const topInfo = this.parseCardInfo(pile[pile.length - 1])
+      if (!topInfo) continue
+      const cardIsRed = NertzGame.RED_SUITS.has(info.suit)
+      const topIsRed = NertzGame.RED_SUITS.has(topInfo.suit)
+      if (cardIsRed !== topIsRed && info.value === topInfo.value - 1) return true
+    }
+
+    return false
+  }
+
+  /** Parses suit and numeric value from a card ID */
+  private parseCardInfo(cardId: string): { suit: string; value: number } | null {
+    const match = cardId.match(/^p\d+_Card_(.+)_(\w+)$/)
+    if (!match) return null
+    const value = RANK_VALUES[match[1]]
+    if (!value) return null
+    return { suit: match[2], value }
+  }
+
+  /**
+   * Sets emissive glow on the face material of playable top cards.
+   * Only applies to nertz top, waste top, and work pile tops.
+   */
+  private updatePlayableHighlights(): void {
+    if (!this.localPileState || !this.localDeck) return
+    const glowColor = new THREE.Color(PLAYABLE_GLOW_COLOR)
+
+    const checkAndHighlight = (cardId: string | undefined) => {
+      if (!cardId) return
+      if (!this.isCardPlayable(cardId)) return
+      const card = this.localDeck!.cards.find((c) => c.id === cardId)
+      if (!card) return
+      card.object.traverse((child) => {
+        if (child instanceof THREE.Mesh && child.material instanceof THREE.MeshStandardMaterial) {
+          child.material.emissive = glowColor
+          child.material.emissiveIntensity = PLAYABLE_GLOW_INTENSITY
+        }
+      })
+    }
+
+    // Nertz top
+    checkAndHighlight(this.localPileState.nertzPile[this.localPileState.nertzPile.length - 1])
+    // Waste top
+    checkAndHighlight(this.localPileState.waste[this.localPileState.waste.length - 1])
+    // Work pile tops
+    for (const pile of this.localPileState.workPiles) {
+      checkAndHighlight(pile[pile.length - 1])
+    }
+
+    this.hintsActive = true
+  }
+
+  /** Clears emissive glow from all local player cards */
+  private clearPlayableHighlights(): void {
+    if (!this.localDeck) return
+    const black = new THREE.Color(0x000000)
+    for (const card of this.localDeck.cards) {
+      card.object.traverse((child) => {
+        if (child instanceof THREE.Mesh && child.material instanceof THREE.MeshStandardMaterial) {
+          child.material.emissive = black
+          child.material.emissiveIntensity = 0
+        }
+      })
+    }
+    this.hintsActive = false
+  }
+
+  // ---------------------------------------------------------------------------
   // Render loop
   // ---------------------------------------------------------------------------
 
@@ -867,7 +1155,27 @@ export class NertzGame {
         const fanDir = this.localSeat
           ? { x: Math.sin(this.localSeat.angle), z: Math.cos(this.localSeat.angle) }
           : { x: 0, z: 1 }
-        this.intro = new IntroAnimation(this.shuffle.shuffledCards, this.camera, piles, fanDir)
+        // Camera starts close to the deal area, ends at the final angled position
+        const closerDist = SEAT_RADIUS + CAMERA_BEHIND_DISTANCE * 0.5
+        const cameraStart = new THREE.Vector3(
+          this.radialX * closerDist,
+          CAMERA_ANGLE_HEIGHT * 0.7,
+          this.radialZ * closerDist
+        )
+        const finalDist = SEAT_RADIUS + CAMERA_BEHIND_DISTANCE
+        const cameraEnd = new THREE.Vector3(
+          this.radialX * finalDist,
+          CAMERA_ANGLE_HEIGHT,
+          this.radialZ * finalDist
+        )
+        this.intro = new IntroAnimation(
+          this.shuffle.shuffledCards,
+          this.camera,
+          piles,
+          fanDir,
+          cameraStart,
+          cameraEnd
+        )
       }
     } else if (this.intro && !this.intro.isComplete) {
       this.intro.update(deltaTime)
@@ -898,44 +1206,40 @@ export class NertzGame {
             positions[card.id] = { x: card.object.position.x, z: card.object.position.z }
           }
           socket.emit("set-state", { positions, pileState: this.localPileState })
+          this.lastActionTime = performance.now()
+          this.updateNertzCounter()
         }
       }
     }
 
-    const { clientWidth: cw, clientHeight: ch } = this.container
-
-    // Main scene — full viewport
-    this.renderer.setScissorTest(false)
-    this.renderer.setViewport(0, 0, cw, ch)
-    this.renderer.clear(true, true, false)
-    this.renderer.render(this.scene, this.camera)
-
-    // Magnifier — bottom-left picture-in-picture using scissor test so only that
-    // region is cleared + rendered; the main scene outside is untouched.
-    if (this.magnifierCamera) {
-      const m = this.MINI_PX
-      const margin = 10
-      this.magnifierCamera.up.copy(this.camera.up)
-      this.magnifierCamera.position.set(this.mouseWorldPos.x, 8, this.mouseWorldPos.z)
-      this.magnifierCamera.lookAt(this.mouseWorldPos.x, 0, this.mouseWorldPos.z)
-
-      this.renderer.setScissorTest(true)
-      this.renderer.setScissor(margin, margin, m, m)
-      this.renderer.setViewport(margin, margin, m, m)
-      this.renderer.clear(true, true, false)
-      this.renderer.render(this.scene, this.magnifierCamera)
-      this.renderer.setScissorTest(false)
-      this.renderer.setViewport(0, 0, cw, ch)
+    // Idle hint: show playable card highlights after IDLE_HINT_DELAY_MS of inactivity
+    if (
+      this.localPileState &&
+      !this.hintsActive &&
+      this.lastActionTime > 0 &&
+      now - this.lastActionTime > IDLE_HINT_DELAY_MS
+    ) {
+      this.updatePlayableHighlights()
     }
+
+    this.renderer.render(this.scene, this.camera)
   }
 
   destroy() {
     this.renderer.setAnimationLoop(null)
     window.removeEventListener("resize", this.onResize)
-    this.renderer.domElement.removeEventListener("mousemove", this.onMouseMoveGlobal)
     this.dragControls.detach()
-    if (this.magnifierEl) this.container.removeChild(this.magnifierEl)
     this.renderer.dispose()
     this.container.removeChild(this.renderer.domElement)
+    if (this.nertzCountEl) {
+      this.container.removeChild(this.nertzCountEl)
+      this.nertzCountEl = null
+    }
+    for (const el of this.opponentEls.values()) el.remove()
+    this.opponentEls.clear()
+    if (this.miniRenderer) {
+      this.miniRenderer.dispose()
+      this.miniRenderer = null
+    }
   }
 }

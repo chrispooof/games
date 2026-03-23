@@ -22,6 +22,17 @@ import { computeDealPiles, computeSeat } from "./logic/geometry"
 /** How long (ms) to keep a disconnected player's session alive before removing them */
 const RECONNECT_GRACE_MS = 30_000
 
+/** Builds nertz pile counts and top card IDs from game state for broadcast */
+const buildNertzInfo = (players: NertzGameState["players"]) => {
+  const nertzCounts: Record<string, number> = {}
+  const nertzTops: Record<string, string | null> = {}
+  for (const p of players) {
+    nertzCounts[p.playerId] = p.nertzPile.length
+    nertzTops[p.playerId] = p.nertzPile.length > 0 ? p.nertzPile[p.nertzPile.length - 1] : null
+  }
+  return { nertzCounts, nertzTops }
+}
+
 /** socketId → { roomCode, playerId } — tracks which room/player each socket belongs to */
 const socketToPlayer = new Map<string, { roomCode: string; playerId: string }>()
 
@@ -80,10 +91,14 @@ export const registerSocketHandlers = (io: Server): void => {
           const sortedPlayers = [...players].sort(
             (a, b) => new Date(a.joinedAt).getTime() - new Date(b.joinedAt).getTime(),
           )
+          const nertzState = gameState?.state
+            ? (gameState.state as unknown as NertzGameState)
+            : null
           socket.emit("room-state", {
             players: sortedPlayers,
             maxPlayers: game?.playerCount ?? 1,
             gameState: gameState?.state ?? null,
+            ...(nertzState?.players ? buildNertzInfo(nertzState.players) : {}),
           })
         }
       },
@@ -133,6 +148,7 @@ export const registerSocketHandlers = (io: Server): void => {
           await updateGameState(roomCode, "nertz", nertzState as unknown as Record<string, unknown>)
           socket.to(roomCode).emit("game-state-update", {
             cardPositions: gameStateUpdate.cardPositions,
+            ...buildNertzInfo(nertzState.players),
           })
         }
         return
@@ -195,6 +211,7 @@ export const registerSocketHandlers = (io: Server): void => {
         socket.to(roomCode).emit("game-state-update", {
           cardPositions: gameStateUpdate.cardPositions,
           ...(gameStateUpdate.foundations ? { foundations: gameStateUpdate.foundations } : {}),
+          ...buildNertzInfo(nertzState.players),
         })
 
         if (isGameOver) {
@@ -247,7 +264,10 @@ export const registerSocketHandlers = (io: Server): void => {
         await updateGameState(roomCode, "nertz", newState as unknown as Record<string, unknown>)
 
         // Let other players update their view with the new card positions
-        socket.to(roomCode).emit("game-state-update", { cardPositions: newState.cardPositions })
+        socket.to(roomCode).emit("game-state-update", {
+          cardPositions: newState.cardPositions,
+          ...buildNertzInfo(newState.players),
+        })
       },
     )
 

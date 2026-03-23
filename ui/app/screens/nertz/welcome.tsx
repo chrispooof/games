@@ -12,6 +12,8 @@ interface PlayerRef {
 
 interface GameState {
   cardPositions?: Record<string, { x: number; z: number }>
+  nertzCounts?: Record<string, number>
+  nertzTops?: Record<string, string | null>
 }
 
 interface NertzWelcomeProps {
@@ -54,12 +56,17 @@ const NertzWelcome = ({ onHost, onJoin }: NertzWelcomeProps) => {
           players,
           gameState,
           maxPlayers,
+          nertzCounts,
+          nertzTops,
         }: {
           players: PlayerRef[]
           gameState: GameState | null
           maxPlayers: number
+          nertzCounts?: Record<string, number>
+          nertzTops?: Record<string, string | null>
         }) => {
-          onHost(playerCount, data.roomCode, players, gameState, maxPlayers)
+          const state = gameState ? { ...gameState, nertzCounts, nertzTops } : null
+          onHost(playerCount, data.roomCode, players, state, maxPlayers)
         }
       )
     },
@@ -89,14 +96,19 @@ const NertzWelcome = ({ onHost, onJoin }: NertzWelcomeProps) => {
       players,
       gameState,
       maxPlayers,
+      nertzCounts,
+      nertzTops,
     }: {
       players: PlayerRef[]
       gameState: GameState | null
       maxPlayers: number
+      nertzCounts?: Record<string, number>
+      nertzTops?: Record<string, string | null>
     }) => {
       setIsLoading(false)
       socket.off("error", onError)
-      onJoin(code, players, gameState, maxPlayers)
+      const state = gameState ? { ...gameState, nertzCounts, nertzTops } : null
+      onJoin(code, players, state, maxPlayers)
     }
 
     const onError = ({ message }: { message: string }) => {

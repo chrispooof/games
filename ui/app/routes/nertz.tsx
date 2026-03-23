@@ -18,6 +18,8 @@ interface PlayerRef {
 interface GameState {
   cardPositions?: Record<string, { x: number; z: number }>
   foundations?: Array<{ suit: string | null; topValue: number }>
+  nertzCounts?: Record<string, number>
+  nertzTops?: Record<string, string | null>
 }
 
 type Scene =
@@ -62,6 +64,13 @@ export default function NertzRoute() {
       cardPositions,
       initialFoundations
     )
+    game.setPlayerIds(
+      scene.initialPlayers.map((p) => p.playerId),
+      getPlayerId()
+    )
+    if (scene.gameState?.nertzCounts) {
+      game.updateOpponentCounts(scene.gameState.nertzCounts, scene.gameState.nertzTops)
+    }
     gameRef.current = game
 
     return () => {
@@ -89,7 +98,9 @@ export default function NertzRoute() {
         setNotification({ message: `Player ${index + 1} joined`, color })
         setTimeout(() => setNotification(null), 3000)
         gameRef.current?.addPlayer()
-        return [...prev, playerId]
+        const updated = [...prev, playerId]
+        gameRef.current?.setPlayerIds(updated, getPlayerId())
+        return updated
       })
     }
 
@@ -131,20 +142,36 @@ export default function NertzRoute() {
 
     /** Applies saved card positions — used on socket reconnect and when other players
      *  finish their intro and broadcast their initial pile layout */
-    const onRoomState = ({ gameState }: { gameState: GameState | null }) => {
+    const onRoomState = ({
+      gameState,
+      nertzCounts,
+      nertzTops,
+    }: {
+      gameState: GameState | null
+      nertzCounts?: Record<string, number>
+      nertzTops?: Record<string, string | null>
+    }) => {
       if (gameState?.cardPositions) {
         gameRef.current?.applyState(gameState.cardPositions)
+      }
+      if (nertzCounts) {
+        gameRef.current?.updateOpponentCounts(nertzCounts, nertzTops)
       }
     }
 
     const onGameStateUpdate = ({
       cardPositions,
       foundations,
+      nertzCounts,
+      nertzTops,
     }: {
       cardPositions: Record<string, { x: number; z: number }>
       foundations?: Array<{ suit: string | null; topValue: number }>
+      nertzCounts?: Record<string, number>
+      nertzTops?: Record<string, string | null>
     }) => {
       gameRef.current?.applyState(cardPositions, foundations)
+      if (nertzCounts) gameRef.current?.updateOpponentCounts(nertzCounts, nertzTops)
     }
 
     const onGameOver = ({ winnerId }: { winnerId: string }) => {

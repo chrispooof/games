@@ -56,39 +56,36 @@ export interface FoundationSlotTransform {
 }
 
 /**
- * Computes all foundation slot positions for a game with `numPlayers` players.
- * Mirrors the layout in FoundationArea: each player gets 4 slots in a row facing their seat.
- * Slot index = playerIndex * 4 + col (col 0–3).
+ * Computes all foundation slot positions arranged in centered rows at the table origin.
+ * Max 8 slots per row; all rows have equal length. Finds the smallest row count
+ * where total/rows <= 8 and total divides evenly.
+ *
+ * Total slots = numPlayers * 4. All slots face angle 0 (no per-player rotation).
  * @param numPlayers - Total number of players
- * @param slotGap - Spacing between adjacent slots within a player's row (default 0.7)
+ * @param slotGap - Horizontal spacing between adjacent slots (default 0.7)
+ * @param rowGap - Vertical spacing between rows (default 1.1)
  */
 export const computeFoundationSlots = (
   numPlayers: number,
-  slotGap = 0.7
+  slotGap = 0.85,
+  rowGap = 1.15
 ): FoundationSlotTransform[] => {
-  const totalRowWidth = 3 * slotGap
-  const minRadius = numPlayers > 1 ? totalRowWidth / (2 * Math.sin(Math.PI / numPlayers)) : 1.2
-  const groupRadius = Math.max(1.2, minRadius + 1.2)
+  const total = numPlayers * 4
+
+  // Find smallest row count where cols fit in 8 and divides evenly
+  let rows = 1
+  while (total / rows > 8 || total % rows !== 0) rows++
+  const cols = total / rows
+
   const slots: FoundationSlotTransform[] = []
-
-  for (let playerIdx = 0; playerIdx < numPlayers; playerIdx++) {
-    const angle = (2 * Math.PI * playerIdx) / numPlayers
-    const radialX = Math.sin(angle)
-    const radialZ = Math.cos(angle)
-    const perpX = Math.cos(angle)
-    const perpZ = -Math.sin(angle)
-    const groupX = radialX * groupRadius
-    const groupZ = radialZ * groupRadius
-
-    for (let col = 0; col < 4; col++) {
-      const offset = col * slotGap - totalRowWidth / 2
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
       slots.push({
-        x: groupX + perpX * offset,
-        z: groupZ + perpZ * offset,
-        angle,
+        x: (c - (cols - 1) / 2) * slotGap,
+        z: (r - (rows - 1) / 2) * rowGap,
+        angle: 0,
       })
     }
   }
-
   return slots
 }

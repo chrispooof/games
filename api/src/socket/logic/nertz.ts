@@ -515,8 +515,8 @@ export const getFoundationSlotPosition = (
 }
 
 // Game constants matching ui/app/games/nertz/src/utils/constants.ts
-const SEAT_RADIUS = 6.5
-const PILE_OFFSET = 1
+const SEAT_RADIUS = 2.5
+const PILE_OFFSET = 0.5
 
 /**
  * Flips up to 3 cards from the player's stock pile to their waste pile.

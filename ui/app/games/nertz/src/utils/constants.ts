@@ -26,14 +26,29 @@ export const CAMERA_HEIGHT = 13
 /** Camera height after the intro zoom-out completes (full table view) */
 export const INTRO_CAMERA_HEIGHT = 12
 
+/** Extra radial distance behind the player's seat for the angled camera */
+export const CAMERA_BEHIND_DISTANCE = 2
+
+/** Y position (height) of the angled perspective camera */
+export const CAMERA_ANGLE_HEIGHT = 5
+
+/** Bias along the radial direction for the camera look-at target (negative = toward center) */
+export const CAMERA_LOOKAT_FORWARD = -0.3
+
 /** Distance from the table center to each player's seat (world units) */
-export const SEAT_RADIUS = 6.5
+export const SEAT_RADIUS = 2.5
 
 /** Distance beyond the seat center where each player's dealt pile lands (world units) */
-export const PILE_OFFSET = 1
+export const PILE_OFFSET = 0.5
 
 /** Snap radius for foundation slots — cards dropped within this distance snap to the slot center */
-export const FOUNDATION_SNAP_RADIUS = 0.35
+export const FOUNDATION_SNAP_RADIUS = 0.45
+
+/** Scale multiplier for foundation slot outlines (larger = bigger visual target) */
+export const FOUNDATION_OUTLINE_SCALE = 1.2
+
+/** Scale multiplier for cards placed on foundation piles (easier to read from angled camera) */
+export const FOUNDATION_CARD_SCALE = 1.2
 
 /** Directional (key) light color and intensity */
 export const DIR_LIGHT_COLOR = 0xfff5e0
@@ -66,6 +81,21 @@ export const TABLE_BORDER_PADDING = 0.1
 
 /** Y offset of the border below the felt to prevent z-fighting */
 export const BORDER_Y_OFFSET = -0.01
+
+/** Scale multiplier applied to a card on hover */
+export const HOVER_SCALE = 1.5
+
+/** Extra Y lift when a card is hovered */
+export const HOVER_LIFT_Y = 0.08
+
+/** Emissive glow color for playable cards (idle hint) */
+export const PLAYABLE_GLOW_COLOR = 0x00ff00
+
+/** Emissive intensity for playable cards (idle hint) */
+export const PLAYABLE_GLOW_INTENSITY = 0.15
+
+/** Milliseconds of inactivity before playable card hints appear */
+export const IDLE_HINT_DELAY_MS = 15_000
 
 /** Numeric values for each card rank */
 export const RANK_VALUES: Record<string, number> = {
