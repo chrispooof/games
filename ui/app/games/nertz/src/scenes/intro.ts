@@ -17,6 +17,12 @@ const NERTZ_PILE_SIZE = 13
 /** Number of work piles dealt (one card each) */
 const WORK_PILE_COUNT = 4
 
+/**
+ * Shifts the merged source stack slightly toward the player before the intro deal.
+ * Prevents overlap with nearby work piles while cards are dealt out.
+ */
+const SOURCE_STACK_DOWNWARD_OFFSET = 0.55
+
 /** Smoothstep easing (cubic) */
 const ease = (t: number): number => t * t * (3 - 2 * t)
 
@@ -79,7 +85,15 @@ export class IntroAnimation {
     this.camera = camera
     this.cameraStart = cameraStart.clone()
     this.cameraEnd = cameraEnd.clone()
-    this.startPositions = cards.map((c) => c.object.position.clone())
+    this.startPositions = cards.map((c) => {
+      const start = c.object.position.clone()
+      start.x += SOURCE_STACK_DOWNWARD_OFFSET * fanDir.x
+      start.z += SOURCE_STACK_DOWNWARD_OFFSET * fanDir.z
+      // Snap to adjusted intro source stack so the first frame has no visual jump.
+      c.object.position.x = start.x
+      c.object.position.z = start.z
+      return start
+    })
     this.assignments = this.buildAssignments(cards.length, piles, fanDir)
   }
 
