@@ -1,4 +1,5 @@
 import type { Server, Socket } from "socket.io"
+import { z } from "zod"
 import {
   addPlayer,
   removePlayer,
@@ -9,7 +10,7 @@ import {
   updateGameState,
 } from "../db/game-store"
 import { resolveGameModule } from "./games/registry"
-import type { SocketEmitMessage } from "./games/types"
+import type { SocketEmitMessage } from "../types/socket"
 
 /** How long (ms) to keep a disconnected player's session alive before removing them */
 const RECONNECT_GRACE_MS = 30_000
@@ -41,6 +42,11 @@ const unsupportedGameMessage = (gameType: string): { message: string } => ({
   message: `Unsupported game type: ${gameType}`,
 })
 
+const joinRoomSchema = z.object({
+  roomCode: z.string().length(6),
+  playerId: z.string().min(1),
+})
+
 /**
  * Registers all Socket.io event handlers on the server.
  * Handles player join/reconnect, disconnect with grace period, and game actions.
@@ -53,7 +59,13 @@ export const registerSocketHandlers = (io: Server): void => {
      * Client joins (or rejoins) a game room.
      * Payload: { roomCode, playerId } — playerId is the stable localStorage UUID.
      */
-    socket.on("join-room", async ({ roomCode, playerId }: { roomCode: string; playerId: string }) => {
+    socket.on("join-room", async (payload: unknown) => {
+      const parsed = joinRoomSchema.safeParse(payload)
+      if (!parsed.success) {
+        socket.emit("error", { message: "Invalid join-room payload" })
+        return
+      }
+      const { roomCode, playerId } = parsed.data
       socket.join(roomCode)
       socketToPlayer.set(socket.id, { roomCode, playerId })
       // Validate if room exists
@@ -148,6 +160,14 @@ export const registerSocketHandlers = (io: Server): void => {
         socket.emit("error", unsupportedGameMessage(game.gameType))
         return
       }
+      if (gameModule.gameActionSchema) {
+        const parsedAction = gameModule.gameActionSchema.safeParse(action)
+        if (!parsedAction.success) {
+          socket.emit("error", { message: `Invalid game-action payload for game type: ${game.gameType}` })
+          return
+        }
+        action = parsedAction.data
+      }
 
       const out = gameModule.handleGameAction({
         action,
@@ -192,6 +212,14 @@ export const registerSocketHandlers = (io: Server): void => {
       if (!gameModule.handleSetState) {
         socket.emit("error", { message: `set-state is not supported for game type: ${game.gameType}` })
         return
+      }
+      if (gameModule.setStateSchema) {
+        const parsedPayload = gameModule.setStateSchema.safeParse(payload)
+        if (!parsedPayload.success) {
+          socket.emit("error", { message: `Invalid set-state payload for game type: ${game.gameType}` })
+          return
+        }
+        payload = parsedPayload.data
       }
 
       const out = gameModule.handleSetState({

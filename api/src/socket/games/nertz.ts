@@ -13,7 +13,8 @@ import type {
   HandleGameActionContext,
   HandleSetStateContext,
   SocketGameModule,
-} from "./types"
+} from "../../types/socket"
+import { nertzGameActionSchema, nertzSetStateSchema } from "../../types/nertz"
 
 /** Builds nertz pile counts and top card IDs from game state for broadcast */
 const buildNertzInfo = (players: NertzGameState["players"]) => {
@@ -38,38 +39,13 @@ const asNertzState = (state: Record<string, unknown> | null): NertzGameState | n
   return Array.isArray(maybe.players) ? maybe : null
 }
 
-const asGameAction = (action: unknown): GameAction | null => {
-  if (!action || typeof action !== "object") return null
-  const maybe = action as Partial<GameAction>
-  return typeof maybe.type === "string" ? (action as GameAction) : null
-}
-
-const asSetStatePayload = (
-  payload: unknown,
-): { positions: Record<string, { x: number; z: number }>; pileState: InitialPileData } | null => {
-  if (!payload || typeof payload !== "object") return null
-  const maybe = payload as {
-    positions?: Record<string, { x: number; z: number }>
-    pileState?: InitialPileData
-  }
-  if (!maybe.positions || !maybe.pileState) return null
-  if (!Array.isArray(maybe.pileState.nertzPile)) return null
-  if (!Array.isArray(maybe.pileState.workPiles) || maybe.pileState.workPiles.length !== 4) return null
-  if (!Array.isArray(maybe.pileState.stock) || !Array.isArray(maybe.pileState.waste)) return null
-  return {
-    positions: maybe.positions,
-    pileState: maybe.pileState,
-  }
-}
-
 const buildRoomStateExtras = (ctx: BuildRoomStateExtrasContext): Record<string, unknown> => {
   const nertzState = asNertzState(ctx.gameState)
   return nertzState ? buildNertzInfo(nertzState.players) : {}
 }
 
 const handleGameAction = (ctx: HandleGameActionContext): GameModuleResult => {
-  const action = asGameAction(ctx.action)
-  if (!action) return { emits: [illegalMoveResult()] }
+  const action = ctx.action as GameAction
 
   if (action.type === "flip-stock") {
     const nertzState = asNertzState(ctx.gameState)
@@ -147,12 +123,7 @@ const handleGameAction = (ctx: HandleGameActionContext): GameModuleResult => {
 }
 
 const handleSetState = (ctx: HandleSetStateContext): GameModuleResult => {
-  const parsed = asSetStatePayload(ctx.payload)
-  if (!parsed) {
-    return {
-      emits: [{ target: "actor", event: "error", payload: { message: "Invalid set-state payload" } }],
-    }
-  }
+  const parsed = ctx.payload as { positions: Record<string, { x: number; z: number }>; pileState: InitialPileData }
 
   const sortedPlayers = [...ctx.players].sort(
     (a, b) => new Date(a.joinedAt).getTime() - new Date(b.joinedAt).getTime(),
@@ -186,6 +157,8 @@ const handleSetState = (ctx: HandleSetStateContext): GameModuleResult => {
 
 export const nertzSocketModule: SocketGameModule = {
   gameType: "nertz",
+  gameActionSchema: nertzGameActionSchema,
+  setStateSchema: nertzSetStateSchema,
   buildRoomStateExtras,
   handleGameAction,
   handleSetState,

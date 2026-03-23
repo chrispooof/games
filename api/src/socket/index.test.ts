@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import type { SocketGameModule } from "./games/types"
+import type { SocketGameModule } from "../types/socket"
+import { z } from "zod"
 
 const {
   addPlayerMock,
@@ -125,6 +126,19 @@ describe("socket index dispatch contract", () => {
     expect(updateGameStateMock).not.toHaveBeenCalled()
   })
 
+  it("rejects invalid join-room payload at ingress", async () => {
+    const { registerSocketHandlers } = await import("./index")
+    const io = createFakeIo()
+    const socket = createFakeSocket("sock-invalid")
+    registerSocketHandlers(io as any)
+    io.connect(socket)
+
+    await socket.trigger("join-room", { roomCode: "BAD", playerId: "" })
+
+    expect(socket.emit).toHaveBeenCalledWith("error", { message: "Invalid join-room payload" })
+    expect(getGameMock).not.toHaveBeenCalled()
+  })
+
   it("routes emitted envelopes to actor / others / room targets", async () => {
     const module: SocketGameModule = {
       gameType: "nertz",
@@ -176,5 +190,44 @@ describe("socket index dispatch contract", () => {
 
     expect(updateGameStateMock).toHaveBeenCalledTimes(1)
     expect(updateGameStateMock).toHaveBeenCalledWith("ABC123", "nertz", nextState)
+  })
+
+  it("rejects invalid game-action payload using module schema", async () => {
+    const handleGameAction = vi.fn(() => ({ emits: [] }))
+    const module: SocketGameModule = {
+      gameType: "nertz",
+      gameActionSchema: z.object({ type: z.literal("valid-action") }),
+      handleGameAction,
+    }
+    const { socket } = await registerAndJoin({ gameType: "nertz", module })
+    socket.emit.mockClear()
+
+    await socket.trigger("game-action", { type: "wrong-action" })
+
+    expect(socket.emit).toHaveBeenCalledWith("error", {
+      message: "Invalid game-action payload for game type: nertz",
+    })
+    expect(handleGameAction).not.toHaveBeenCalled()
+    expect(updateGameStateMock).not.toHaveBeenCalled()
+  })
+
+  it("rejects invalid set-state payload using module schema", async () => {
+    const handleSetState = vi.fn(() => ({ emits: [] }))
+    const module: SocketGameModule = {
+      gameType: "nertz",
+      handleGameAction: () => ({ emits: [] }),
+      handleSetState,
+      setStateSchema: z.object({ positions: z.record(z.string(), z.object({ x: z.number(), z: z.number() })) }),
+    }
+    const { socket } = await registerAndJoin({ gameType: "nertz", module })
+    socket.emit.mockClear()
+
+    await socket.trigger("set-state", { invalid: true })
+
+    expect(socket.emit).toHaveBeenCalledWith("error", {
+      message: "Invalid set-state payload for game type: nertz",
+    })
+    expect(handleSetState).not.toHaveBeenCalled()
+    expect(updateGameStateMock).not.toHaveBeenCalled()
   })
 })

@@ -21,27 +21,16 @@ const makeState = (): NertzGameState => ({
 })
 
 describe("nertz socket module", () => {
+  it("exposes action and set-state schemas for ingress validation", () => {
+    expect(nertzSocketModule.gameActionSchema).toBeDefined()
+    expect(nertzSocketModule.setStateSchema).toBeDefined()
+  })
+
   it("adds nertz counts/tops to room-state extras", () => {
     const extras = nertzSocketModule.buildRoomStateExtras?.({ gameState: makeState() as unknown as Record<string, unknown> })
     expect(extras).toEqual({
       nertzCounts: { p0: 1 },
       nertzTops: { p0: "p0_Card_A_hearts" },
-    })
-  })
-
-  it("returns illegal-move for invalid action payload", () => {
-    const out = nertzSocketModule.handleGameAction({
-      action: null,
-      playerId: "p0",
-      roomCode: "ABC123",
-      gameState: makeState() as unknown as Record<string, unknown>,
-    })
-    expect(out.nextState).toBeUndefined()
-    expect(out.emits).toHaveLength(1)
-    expect(out.emits[0]).toEqual({
-      target: "actor",
-      event: "action-result",
-      payload: { ok: false, cardId: "", reason: "illegal-move" },
     })
   })
 
@@ -77,20 +66,5 @@ describe("nertz socket module", () => {
     expect(out.emits[0].event).toBe("action-result")
     expect(out.emits[1].target).toBe("others")
     expect(out.emits[1].event).toBe("game-state-update")
-  })
-
-  it("rejects invalid set-state payload", () => {
-    const out = nertzSocketModule.handleSetState?.({
-      payload: { invalid: true },
-      playerId: "p0",
-      numPlayers: 2,
-      players: [{ playerId: "p0", socketId: "s0", joinedAt: "2026-01-01T00:00:00.000Z" }],
-      gameState: null,
-    })
-    expect(out).toBeDefined()
-    expect(out?.nextState).toBeUndefined()
-    expect(out?.emits).toEqual([
-      { target: "actor", event: "error", payload: { message: "Invalid set-state payload" } },
-    ])
   })
 })

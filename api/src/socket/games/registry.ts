@@ -1,4 +1,4 @@
-import type { SocketGameModule } from "./types"
+import type { SocketGameModule } from "../../types/socket"
 import { nertzSocketModule } from "./nertz"
 
 const modules = new Map<string, SocketGameModule>([[nertzSocketModule.gameType, nertzSocketModule]])

@@ -1,4 +1,5 @@
-import type { GamePlayer } from "../../db/game-store"
+import type { GamePlayer } from "../db/game-store"
+import type { ZodType } from "zod"
 
 export type SocketEmitTarget = "actor" | "others" | "room"
 
@@ -34,6 +35,8 @@ export interface GameModuleResult {
 
 export interface SocketGameModule {
   gameType: string
+  gameActionSchema?: ZodType<unknown>
+  setStateSchema?: ZodType<unknown>
   buildRoomStateExtras?: (ctx: BuildRoomStateExtrasContext) => Record<string, unknown>
   handleGameAction: (ctx: HandleGameActionContext) => GameModuleResult
   handleSetState?: (ctx: HandleSetStateContext) => GameModuleResult
