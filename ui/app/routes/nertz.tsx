@@ -6,6 +6,7 @@ import NertzWelcome from "~/screens/nertz/welcome"
 import { socket } from "~/lib/socket"
 import { getPlayerId } from "~/lib/player-id"
 import type { ActionResult } from "~/games/nertz/src/types/actions"
+import type { InitialLocalPileState } from "~/games/nertz/src/game"
 
 export const meta: Route.MetaFunction = () => {
   return [{ title: "Nertz" }, { name: "description", content: "Nertz game" }]
@@ -20,6 +21,13 @@ interface GameState {
   foundations?: Array<{ suit: string | null; topValue: number }>
   nertzCounts?: Record<string, number>
   nertzTops?: Record<string, string | null>
+  players?: Array<{
+    playerId: string
+    nertzPile: string[]
+    workPiles: [string[], string[], string[], string[]]
+    stock: string[]
+    waste: string[]
+  }>
 }
 
 type Scene =
@@ -46,6 +54,23 @@ export default function NertzRoute() {
   const containerRef = useRef<HTMLDivElement>(null)
   const gameRef = useRef<NertzGame | null>(null)
 
+  const getLocalPileState = (gameState: GameState | null): InitialLocalPileState | null => {
+    const localId = getPlayerId()
+    const playerState = gameState?.players?.find((p) => p.playerId === localId)
+    if (!playerState) return null
+    return {
+      nertzPile: [...playerState.nertzPile],
+      workPiles: playerState.workPiles.map((pile) => [...pile]) as [
+        string[],
+        string[],
+        string[],
+        string[],
+      ],
+      stock: [...playerState.stock],
+      waste: [...playerState.waste],
+    }
+  }
+
   /** Create and destroy the game instance whenever the scene changes */
   useEffect(() => {
     if (scene.type !== "game" || !containerRef.current) return
@@ -55,6 +80,7 @@ export default function NertzRoute() {
     const localPlayerIndex = scene.initialPlayers.findIndex((p) => p.playerId === getPlayerId())
     const cardPositions = scene.gameState?.cardPositions ?? null
     const initialFoundations = scene.gameState?.foundations ?? null
+    const initialLocalPileState = getLocalPileState(scene.gameState)
 
     const game = new NertzGame(
       containerRef.current,
@@ -62,7 +88,8 @@ export default function NertzRoute() {
       scene.initialPlayers.length,
       localPlayerIndex >= 0 ? localPlayerIndex : 0,
       cardPositions,
-      initialFoundations
+      initialFoundations,
+      initialLocalPileState
     )
     game.setPlayerIds(
       scene.initialPlayers.map((p) => p.playerId),
@@ -153,6 +180,10 @@ export default function NertzRoute() {
     }) => {
       if (gameState?.cardPositions) {
         gameRef.current?.applyState(gameState.cardPositions)
+      }
+      const localPileState = getLocalPileState(gameState)
+      if (localPileState) {
+        gameRef.current?.applyLocalPileState(localPileState)
       }
       if (nertzCounts) {
         gameRef.current?.updateOpponentCounts(nertzCounts, nertzTops)

@@ -68,6 +68,13 @@ interface LocalPileState {
   waste: string[]
 }
 
+export interface InitialLocalPileState {
+  nertzPile: string[]
+  workPiles: [string[], string[], string[], string[]]
+  stock: string[]
+  waste: string[]
+}
+
 /**
  * Main game class for Nertz. Owns the Three.js renderer, scene, and game loop.
  * Mount it by passing a container element; tear it down by calling `destroy()`.
@@ -165,7 +172,8 @@ export class NertzGame {
     initialDeckCount = 1,
     localPlayerIndex = 0,
     initialCardPositions: Record<string, { x: number; z: number }> | null = null,
-    initialFoundations: ClientFoundationState[] | null = null
+    initialFoundations: ClientFoundationState[] | null = null,
+    initialLocalPileState: InitialLocalPileState | null = null
   ) {
     this.container = container
     this.maxPlayers = maxPlayers
@@ -173,6 +181,19 @@ export class NertzGame {
     this.localPlayerIndex = localPlayerIndex
     this.seatRadius = computeSeatRadius(maxPlayers)
     this.initialCardPositions = initialCardPositions
+    if (initialLocalPileState) {
+      this.localPileState = {
+        nertzPile: [...initialLocalPileState.nertzPile],
+        workPiles: initialLocalPileState.workPiles.map((p) => [...p]) as [
+          string[],
+          string[],
+          string[],
+          string[],
+        ],
+        stock: [...initialLocalPileState.stock],
+        waste: [...initialLocalPileState.waste],
+      }
+    }
     // Initialise foundation state: use server state if available, else all empty slots
     this.localFoundationState =
       initialFoundations ??
@@ -443,8 +464,12 @@ export class NertzGame {
       if (hasPositions) {
         this.positionCamera()
         this.localPilePositions = computeDealPiles(seat, this.seatRadius, PILE_OFFSET)
-        this.updateDraggableCards()
-        this.registerWorkPilesWithDragControls()
+        if (this.localPileState) {
+          this.refreshLocalDisplay()
+        } else {
+          this.updateDraggableCards()
+          this.registerWorkPilesWithDragControls()
+        }
         this.registerStockWithDragControls()
       } else {
         const perpDir = { x: Math.cos(seat.angle), z: -Math.sin(seat.angle) }
@@ -664,6 +689,21 @@ export class NertzGame {
         }
       }
     }
+  }
+
+  /**
+   * Replaces local pile ordering from an authoritative server snapshot (e.g. reconnect room-state),
+   * then refreshes the local player's display/draggables.
+   */
+  applyLocalPileState(pileState: InitialLocalPileState): void {
+    this.localPileState = {
+      nertzPile: [...pileState.nertzPile],
+      workPiles: pileState.workPiles.map((p) => [...p]) as [string[], string[], string[], string[]],
+      stock: [...pileState.stock],
+      waste: [...pileState.waste],
+    }
+    this.refreshLocalDisplay()
+    this.registerStockWithDragControls()
   }
 
   /**
