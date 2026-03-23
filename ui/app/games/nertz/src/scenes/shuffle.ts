@@ -83,6 +83,10 @@ export class ShuffleAnimation {
     this.centerZ = center.z
     this.perpX = perpDir.x
     this.perpZ = perpDir.z
+    // Snap all cards face-down immediately so no card faces are visible during the shuffle
+    this.cards.forEach((card) => {
+      card.object.rotation.z = Math.PI
+    })
   }
 
   update(dt: number): void {
@@ -111,8 +115,6 @@ export class ShuffleAnimation {
       card.object.position.z = THREE.MathUtils.lerp(start.z, this.centerZ, te)
       // Parabolic arc over table surface
       card.object.position.y = CARD_Y_OFFSET + i * 0.0005 + COLLAPSE_ARC * Math.sin(t * Math.PI)
-      // Flip face-down in the second half of the flight
-      card.object.rotation.z = ease(clamp01((t - 0.5) * 2)) * Math.PI
     })
 
     if (this.phaseTimer >= totalDuration) {

@@ -169,7 +169,7 @@ export class IntroAnimation {
 
     const card = this.cards[this.currentIndex]
     const start = this.startPositions[this.currentIndex]
-    const { targetX, targetY, targetZ, faceUp } = this.assignments[this.currentIndex]
+    const { targetX, targetY, targetZ, faceUp: _faceUp } = this.assignments[this.currentIndex]
 
     // XZ: smooth glide to pile target (staggered for nertz/stock)
     card.object.position.x = THREE.MathUtils.lerp(start.x, targetX, t)
@@ -177,11 +177,6 @@ export class IntroAnimation {
 
     // Y: parabolic arc peaks at mid-flight, lands at staggered targetY
     card.object.position.y = targetY + CARD_ARC_HEIGHT * Math.sin(raw * Math.PI)
-
-    // Face-down cards flip during the second half of the arc; face-up cards don't flip
-    if (!faceUp) {
-      card.object.rotation.z = ease(Math.max(0, (raw - 0.5) * 2)) * Math.PI
-    }
 
     if (raw >= 1) {
       this.landCard(card)
