@@ -3,9 +3,6 @@ import {
   getFoundationSlotPosition,
   processAction,
   processFlipStock,
-  type GameAction,
-  type InitialPileData,
-  type NertzGameState,
 } from "../logic/nertz"
 import type {
   BuildRoomStateExtrasContext,
@@ -15,6 +12,7 @@ import type {
   SocketGameModule,
 } from "../../types/socket"
 import { nertzGameActionSchema, nertzSetStateSchema } from "../../types/nertz"
+import type { GameAction, InitialPileData, NertzGameState } from "../../types/nertz"
 
 /** Builds nertz pile counts and top card IDs from game state for broadcast */
 const buildNertzInfo = (players: NertzGameState["players"]) => {
@@ -27,23 +25,27 @@ const buildNertzInfo = (players: NertzGameState["players"]) => {
   return { nertzCounts, nertzTops }
 }
 
+/** Builds a canonical illegal-move action-result envelope for actor-only responses. */
 const illegalMoveResult = (cardId = "") => ({
   target: "actor" as const,
   event: "action-result",
   payload: { ok: false, cardId, reason: "illegal-move" },
 })
 
+/** Casts persisted unknown game state into Nertz shape with a minimal runtime guard. */
 const asNertzState = (state: Record<string, unknown> | null): NertzGameState | null => {
   if (!state) return null
   const maybe = state as unknown as NertzGameState
   return Array.isArray(maybe.players) ? maybe : null
 }
 
+/** Builds Nertz-specific additions to the base `room-state` payload. */
 const buildRoomStateExtras = (ctx: BuildRoomStateExtrasContext): Record<string, unknown> => {
   const nertzState = asNertzState(ctx.gameState)
   return nertzState ? buildNertzInfo(nertzState.players) : {}
 }
 
+/** Routes validated game actions into Nertz domain logic and event envelopes. */
 const handleGameAction = (ctx: HandleGameActionContext): GameModuleResult => {
   const action = ctx.action as GameAction
 
@@ -122,6 +124,7 @@ const handleGameAction = (ctx: HandleGameActionContext): GameModuleResult => {
   return { emits }
 }
 
+/** Handles initial pile-state upload after intro dealing completes. */
 const handleSetState = (ctx: HandleSetStateContext): GameModuleResult => {
   const parsed = ctx.payload as { positions: Record<string, { x: number; z: number }>; pileState: InitialPileData }
 

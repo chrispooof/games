@@ -6,32 +6,12 @@ import {
   UpdateItemCommand,
 } from "dynamodb-toolbox"
 import { CardGamesTable, GameEntity, PlayerEntity, GameStateEntity } from "./table"
+import type { GameMetadata, GamePlayer, GameState } from "../types/db"
+import { GAME_TTL_SECONDS } from "../utils/constants"
+export type { GameMetadata, GamePlayer, GameState, GameStatus } from "../types/db"
 
-export type GameStatus = "waiting" | "in-progress" | "finished"
-
-export interface GameMetadata {
-  roomCode: string
-  gameType: string
-  playerCount: number
-  status: GameStatus
-  createdAt: string
-  updatedAt: string
-  ttl: number
-}
-
-export interface GamePlayer {
-  playerId: string
-  socketId: string
-  joinedAt: string
-}
-
-export interface GameState {
-  gameType: string
-  state: Record<string, unknown>
-}
-
-/** Unix epoch seconds — 24 hours from now */
-const ttlInSeconds = (): number => Math.floor(Date.now() / 1000) + 86400
+/** Unix epoch seconds when a newly written record should expire. */
+const ttlInSeconds = (): number => Math.floor(Date.now() / 1000) + GAME_TTL_SECONDS
 
 /**
  * Persists a new game session. createdAt and updatedAt are managed automatically

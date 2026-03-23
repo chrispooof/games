@@ -1,7 +1,8 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb"
 import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb"
+import { DEFAULT_AWS_REGION, DEFAULT_DYNAMODB_TABLE } from "../utils/constants"
 
-const REGION = process.env.AWS_REGION ?? "us-east-1"
+const REGION = process.env.AWS_REGION ?? DEFAULT_AWS_REGION
 const ENDPOINT = process.env.DYNAMODB_ENDPOINT
 
 /**
@@ -19,4 +20,5 @@ const dynamoClient = new DynamoDBClient({
 
 export const documentClient = DynamoDBDocumentClient.from(dynamoClient)
 
-export const TABLE = process.env.DYNAMODB_TABLE ?? "CardGames"
+/** DynamoDB table used by all Toolbox entities in this API. */
+export const TABLE = process.env.DYNAMODB_TABLE ?? DEFAULT_DYNAMODB_TABLE

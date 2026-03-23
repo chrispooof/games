@@ -1,20 +1,17 @@
-import { z } from "zod"
 import { TRPCError } from "@trpc/server"
 import { router, publicProcedure } from "../trpc"
 import { createGame, getGame } from "../db/game-store"
+import { createGameInputSchema, getGameInputSchema } from "../types/game"
+import { ROOM_CODE_LENGTH } from "../utils/constants"
 
 /** Generates a random 6-character uppercase room code */
-const generateRoomCode = (): string => Math.random().toString(36).slice(2, 8).toUpperCase()
+const generateRoomCode = (): string =>
+  Math.random().toString(36).slice(2, 2 + ROOM_CODE_LENGTH).toUpperCase()
 
 export const gameRouter = router({
   /** Creates a new game session and persists it to DynamoDB */
   create: publicProcedure
-    .input(
-      z.object({
-        playerCount: z.number().min(2).max(8),
-        gameType: z.string().default("nertz"),
-      }),
-    )
+    .input(createGameInputSchema)
     .mutation(async ({ input }) => {
       const roomCode = generateRoomCode()
       const game = await createGame({ roomCode, gameType: input.gameType, playerCount: input.playerCount })
@@ -23,7 +20,7 @@ export const gameRouter = router({
 
   /** Fetches a game session by room code */
   get: publicProcedure
-    .input(z.object({ roomCode: z.string().length(6) }))
+    .input(getGameInputSchema)
     .query(async ({ input }) => {
       const game = await getGame(input.roomCode)
       if (!game) {

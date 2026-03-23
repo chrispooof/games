@@ -1,75 +1,28 @@
 import { computeFoundationSlots, computeSeat, computeDealPiles } from "./geometry"
-
-export type Suit = "clubs" | "diamonds" | "hearts" | "spades"
-
-/** State of a single foundation slot */
-export interface FoundationState {
-  slotIndex: number
-  suit: Suit | null
-  /** 0 = empty, 1 = Ace, …, 13 = King */
-  topValue: number
-}
-
-/** Complete pile state for a single player */
-export interface PlayerPileState {
-  playerId: string
-  playerIndex: number
-  /** cardIds ordered bottom-to-top; last element is the top (playable) card */
-  nertzPile: string[]
-  workPiles: [string[], string[], string[], string[]]
-  /** cardIds ordered bottom-to-top */
-  stock: string[]
-  waste: string[]
-}
-
-/** Full server-side game state for a Nertz session */
-export interface NertzGameState {
-  numPlayers: number
-  cardPositions: Record<string, { x: number; z: number }>
-  /** numPlayers * 4 foundation slots */
-  foundations: FoundationState[]
-  players: PlayerPileState[]
-  phase: "dealing" | "playing" | "finished"
-  winnerId: string | null
-}
-
-/** Pile data sent by the client after the deal animation completes */
-export interface InitialPileData {
-  nertzPile: string[]
-  workPiles: [string[], string[], string[], string[]]
-  stock: string[]
-  waste: string[]
-}
-
-/** Actions a player can take (mirrored from ui/app/games/nertz/src/types/actions.ts) */
-export type GameAction =
-  | {
-      type: "play-to-foundation"
-      cardId: string
-      slotIndex: number
-      source: "nertz" | "work" | "waste"
-      sourceIndex?: number
-    }
-  | {
-      type: "play-to-work-pile"
-      cardId: string
-      targetPileIndex: number
-      source: "nertz" | "work" | "waste"
-      sourceIndex?: number
-    }
-  | {
-      type: "merge-work-piles"
-      sourcePileIndex: number
-      cardId: string
-      targetPileIndex: number
-    }
-  | { type: "flip-stock" }
-  | { type: "move-card"; cardId: string; position: { x: number; z: number } }
-
-/** Response sent back to the acting socket only */
-export type ActionResult =
-  | { ok: true; cardId: string }
-  | { ok: false; cardId: string; reason: "illegal-move" | "foundation-conflict" | "not-your-pile" }
+import {
+  NERTZ_PILE_OFFSET,
+  NERTZ_PILE_WORK_START,
+  NERTZ_SEAT_RADIUS,
+  NERTZ_WORK_PILE_FAN_OFFSET,
+} from "../../utils/constants"
+import type {
+  ActionResult,
+  FoundationState,
+  GameAction,
+  InitialPileData,
+  NertzGameState,
+  PlayerPileState,
+  Suit,
+} from "../../types/nertz"
+export type {
+  ActionResult,
+  FoundationState,
+  GameAction,
+  InitialPileData,
+  NertzGameState,
+  PlayerPileState,
+  Suit,
+} from "../../types/nertz"
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -250,10 +203,6 @@ const applyFoundationPlay = (
   }
 }
 
-const WORK_PILE_FAN_OFFSET = 0.2
-/** Work piles start at pile index 1 in the 7-pile layout */
-const PILE_WORK_START = 1
-
 const applyWorkPilePlay = (
   action: Extract<GameAction, { type: "play-to-work-pile" }>,
   playerState: PlayerPileState,
@@ -277,17 +226,17 @@ const applyWorkPilePlay = (
   // Compute fanned positions for ALL cards in the updated pile so remote clients
   // can render the full fan without needing separate pile state.
   // Fan direction: toward the player (positive radial direction).
-  const seat = computeSeat(playerState.playerIndex, state.numPlayers, SEAT_RADIUS)
-  const piles = computeDealPiles(seat, SEAT_RADIUS, PILE_OFFSET)
-  const basePos = piles[PILE_WORK_START + action.targetPileIndex]
+  const seat = computeSeat(playerState.playerIndex, state.numPlayers, NERTZ_SEAT_RADIUS)
+  const piles = computeDealPiles(seat, NERTZ_SEAT_RADIUS, NERTZ_PILE_OFFSET)
+  const basePos = piles[NERTZ_PILE_WORK_START + action.targetPileIndex]
   const fanDirX = Math.sin(seat.angle)
   const fanDirZ = Math.cos(seat.angle)
 
   const cardPositionsDelta: Record<string, { x: number; z: number }> = {}
   for (const [i, cardId] of playerState.workPiles[action.targetPileIndex].entries()) {
     const pos = {
-      x: basePos.x + i * WORK_PILE_FAN_OFFSET * fanDirX,
-      z: basePos.z + i * WORK_PILE_FAN_OFFSET * fanDirZ,
+      x: basePos.x + i * NERTZ_WORK_PILE_FAN_OFFSET * fanDirX,
+      z: basePos.z + i * NERTZ_WORK_PILE_FAN_OFFSET * fanDirZ,
     }
     state.cardPositions[cardId] = pos
     cardPositionsDelta[cardId] = pos
@@ -362,17 +311,17 @@ const applyMergeWorkPiles = (
   }
 
   // Recompute fanned positions for all cards in the target pile
-  const seat = computeSeat(playerState.playerIndex, state.numPlayers, SEAT_RADIUS)
-  const piles = computeDealPiles(seat, SEAT_RADIUS, PILE_OFFSET)
-  const basePos = piles[PILE_WORK_START + action.targetPileIndex]
+  const seat = computeSeat(playerState.playerIndex, state.numPlayers, NERTZ_SEAT_RADIUS)
+  const piles = computeDealPiles(seat, NERTZ_SEAT_RADIUS, NERTZ_PILE_OFFSET)
+  const basePos = piles[NERTZ_PILE_WORK_START + action.targetPileIndex]
   const fanDirX = Math.sin(seat.angle)
   const fanDirZ = Math.cos(seat.angle)
 
   const cardPositionsDelta: Record<string, { x: number; z: number }> = {}
   for (const [i, cardId] of targetPile.entries()) {
     const pos = {
-      x: basePos.x + i * WORK_PILE_FAN_OFFSET * fanDirX,
-      z: basePos.z + i * WORK_PILE_FAN_OFFSET * fanDirZ,
+      x: basePos.x + i * NERTZ_WORK_PILE_FAN_OFFSET * fanDirX,
+      z: basePos.z + i * NERTZ_WORK_PILE_FAN_OFFSET * fanDirZ,
     }
     state.cardPositions[cardId] = pos
     cardPositionsDelta[cardId] = pos
@@ -514,10 +463,6 @@ export const getFoundationSlotPosition = (
   return slots[slotIndex] ?? null
 }
 
-// Game constants matching ui/app/games/nertz/src/utils/constants.ts
-const SEAT_RADIUS = 2.5
-const PILE_OFFSET = 0.5
-
 /**
  * Flips up to 3 cards from the player's stock pile to their waste pile.
  * If the stock pile is empty, cycles the waste pile back to stock (face-down).
@@ -538,8 +483,8 @@ export const processFlipStock = (
     return { result: { ok: false, cardId: "", reason: "not-your-pile" } }
   }
 
-  const seat = computeSeat(playerState.playerIndex, state.numPlayers, SEAT_RADIUS)
-  const piles = computeDealPiles(seat, SEAT_RADIUS, PILE_OFFSET)
+  const seat = computeSeat(playerState.playerIndex, state.numPlayers, NERTZ_SEAT_RADIUS)
+  const piles = computeDealPiles(seat, NERTZ_SEAT_RADIUS, NERTZ_PILE_OFFSET)
   // piles[5] = waste position, piles[6] = stock position
   const wastePos = piles[5]
   const stockPos = piles[6]

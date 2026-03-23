@@ -32,7 +32,7 @@ vi.mock("../db/game-store", () => ({
   updateGameState: updateGameStateMock,
 }))
 
-vi.mock("./games/registry", () => ({
+vi.mock("./registry", () => ({
   resolveGameModule: resolveGameModuleMock,
 }))
 

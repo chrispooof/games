@@ -2,13 +2,7 @@
  * Pure geometry utilities — mirrored from ui/app/games/nertz/src/utils/geometry.ts.
  * No Three.js dependencies; all inputs are explicit parameters.
  */
-
-/** Seat transform: world-space position and Y-rotation for a player's area */
-export interface SeatTransform {
-  x: number
-  z: number
-  angle: number
-}
+import type { FoundationSlotTransform, SeatTransform } from "../../types/geometry"
 
 /**
  * Computes the world-space seat transform for player at `index` out of `total` players.
@@ -43,13 +37,6 @@ export const computeDealPiles = (
     const offset = (i - 3) * spacing
     return { x: cx + perpX * offset, z: cz + perpZ * offset }
   })
-}
-
-/** Foundation slot position in world space */
-export interface FoundationSlotTransform {
-  x: number
-  z: number
-  angle: number
 }
 
 /**

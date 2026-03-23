@@ -6,9 +6,10 @@ import { Server } from "socket.io"
 import { appRouter } from "./router/index"
 import { createContext } from "./trpc"
 import { registerSocketHandlers } from "./socket/index"
+import { DEFAULT_API_PORT, DEFAULT_UI_ORIGIN } from "./utils/constants"
 
-const PORT = Number(process.env.PORT ?? 3001)
-const UI_ORIGIN = process.env.UI_ORIGIN ?? "http://localhost:5173"
+const PORT = Number(process.env.PORT ?? DEFAULT_API_PORT)
+const UI_ORIGIN = process.env.UI_ORIGIN ?? DEFAULT_UI_ORIGIN
 
 const server = Fastify({ logger: true })
 

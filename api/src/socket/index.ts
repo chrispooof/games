@@ -9,11 +9,10 @@ import {
   updatePlayerSocket,
   updateGameState,
 } from "../db/game-store"
-import { resolveGameModule } from "./games/registry"
+import { resolveGameModule } from "./registry"
 import type { SocketEmitMessage } from "../types/socket"
-
-/** How long (ms) to keep a disconnected player's session alive before removing them */
-const RECONNECT_GRACE_MS = 30_000
+import { RECONNECT_GRACE_MS } from "../utils/constants"
+import { JoinRoomSchema } from "../types/socket"
 
 /** socketId → { roomCode, playerId } — tracks which room/player each socket belongs to */
 const socketToPlayer = new Map<string, { roomCode: string; playerId: string }>()
@@ -21,6 +20,10 @@ const socketToPlayer = new Map<string, { roomCode: string; playerId: string }>()
 /** playerId → timeout handle — pending removal after disconnect grace period */
 const disconnectTimers = new Map<string, NodeJS.Timeout>()
 
+/**
+ * Emits one or more prebuilt socket envelopes to the actor, others, or entire room.
+ * Keeps dispatch semantics centralized so game modules only return declarative messages.
+ */
 const emitMessages = (
   io: Server,
   socket: Socket,
@@ -38,13 +41,9 @@ const emitMessages = (
   }
 }
 
+/** Standardized error payload for unsupported game modules. */
 const unsupportedGameMessage = (gameType: string): { message: string } => ({
   message: `Unsupported game type: ${gameType}`,
-})
-
-const joinRoomSchema = z.object({
-  roomCode: z.string().length(6),
-  playerId: z.string().min(1),
 })
 
 /**
@@ -60,7 +59,7 @@ export const registerSocketHandlers = (io: Server): void => {
      * Payload: { roomCode, playerId } — playerId is the stable localStorage UUID.
      */
     socket.on("join-room", async (payload: unknown) => {
-      const parsed = joinRoomSchema.safeParse(payload)
+      const parsed = JoinRoomSchema.safeParse(payload)
       if (!parsed.success) {
         socket.emit("error", { message: "Invalid join-room payload" })
         return
