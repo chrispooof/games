@@ -18,6 +18,25 @@ export interface SocketEmitMessage {
   payload: unknown
 }
 
+/** Structured log metadata for socket lifecycle and action events. */
+export interface SocketLogMeta {
+  roomCode?: string
+  playerId?: string
+  socketId?: string
+  gameType?: string
+  reason?: string
+  details?: Record<string, unknown>
+}
+
+/** In-memory counters used for lightweight socket diagnostics. */
+export interface SocketMetrics {
+  joinRoomAttempts: number
+  joinRoomSuccess: number
+  reconnects: number
+  unsupportedGameType: Map<string, number>
+  actionRejections: Map<string, number>
+}
+
 /** Context provided when augmenting room-state payloads per game module. */
 export interface BuildRoomStateExtrasContext {
   gameState: Record<string, unknown> | null

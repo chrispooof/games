@@ -1,5 +1,4 @@
 import type { Server, Socket } from "socket.io"
-import { z } from "zod"
 import {
   addPlayer,
   removePlayer,
@@ -10,7 +9,7 @@ import {
   updateGameState,
 } from "../db/game-store"
 import { resolveGameModule } from "./registry"
-import type { SocketEmitMessage } from "../types/socket"
+import type { SocketEmitMessage, SocketLogMeta, SocketMetrics } from "../types/socket"
 import { RECONNECT_GRACE_MS } from "../utils/constants"
 import { JoinRoomSchema } from "../types/socket"
 
@@ -19,6 +18,51 @@ const socketToPlayer = new Map<string, { roomCode: string; playerId: string }>()
 
 /** playerId → timeout handle — pending removal after disconnect grace period */
 const disconnectTimers = new Map<string, NodeJS.Timeout>()
+
+const socketMetrics: SocketMetrics = {
+  joinRoomAttempts: 0,
+  joinRoomSuccess: 0,
+  reconnects: 0,
+  unsupportedGameType: new Map<string, number>(),
+  actionRejections: new Map<string, number>(),
+}
+
+/**
+ * Increments a named counter in a map-backed metrics bucket and returns the new value.
+ * Used for per-key running counts such as rejection reasons and unsupported game types.
+ */
+const incrementCount = (bucket: Map<string, number>, key: string): number => {
+  const next = (bucket.get(key) ?? 0) + 1
+  bucket.set(key, next)
+  return next
+}
+
+/** Emits one structured JSON log line for easier filtering/aggregation in CI/cloud logs. */
+const logSocketEvent = (event: string, meta: SocketLogMeta = {}): void => {
+  console.log(
+    JSON.stringify({
+      scope: "socket",
+      event,
+      at: new Date().toISOString(),
+      ...meta,
+    }),
+  )
+}
+
+/** Tracks and logs unsupported game type occurrences per gameType. */
+const trackUnsupportedGameType = (gameType: string, meta: Omit<SocketLogMeta, "gameType">): void => {
+  const count = incrementCount(socketMetrics.unsupportedGameType, gameType)
+  logSocketEvent("unsupported-game-type", { ...meta, gameType, details: { count } })
+}
+
+/** Tracks and logs action rejection reasons seen in emitted action-result envelopes. */
+const trackActionRejection = (
+  reason: "illegal-move" | "foundation-conflict" | "not-your-pile" | string,
+  meta: Omit<SocketLogMeta, "reason">,
+): void => {
+  const count = incrementCount(socketMetrics.actionRejections, reason)
+  logSocketEvent("action-rejected", { ...meta, reason, details: { count } })
+}
 
 /**
  * Emits one or more prebuilt socket envelopes to the actor, others, or entire room.
@@ -31,6 +75,13 @@ const emitMessages = (
   messages: SocketEmitMessage[],
 ): void => {
   for (const msg of messages) {
+    if (msg.event === "action-result" && typeof msg.payload === "object" && msg.payload !== null) {
+      const maybeResult = msg.payload as { ok?: boolean; reason?: string }
+      if (maybeResult.ok === false && typeof maybeResult.reason === "string") {
+        trackActionRejection(maybeResult.reason, { roomCode, socketId: socket.id })
+      }
+    }
+
     if (msg.target === "actor") {
       socket.emit(msg.event, msg.payload)
     } else if (msg.target === "others") {
@@ -59,18 +110,29 @@ export const registerSocketHandlers = (io: Server): void => {
      * Payload: { roomCode, playerId } — playerId is the stable localStorage UUID.
      */
     socket.on("join-room", async (payload: unknown) => {
+      socketMetrics.joinRoomAttempts += 1
       const parsed = JoinRoomSchema.safeParse(payload)
       if (!parsed.success) {
+        logSocketEvent("join-room-invalid-payload", {
+          socketId: socket.id,
+          details: { count: socketMetrics.joinRoomAttempts },
+        })
         socket.emit("error", { message: "Invalid join-room payload" })
         return
       }
       const { roomCode, playerId } = parsed.data
       socket.join(roomCode)
       socketToPlayer.set(socket.id, { roomCode, playerId })
+      logSocketEvent("join-room-attempt", {
+        roomCode,
+        playerId,
+        socketId: socket.id,
+        details: { count: socketMetrics.joinRoomAttempts },
+      })
       // Validate if room exists
       const game = await getGame(roomCode)
       if (!game) {
-        console.log(`[socket] Room ${roomCode} not found`)
+        logSocketEvent("join-room-room-not-found", { roomCode, playerId, socketId: socket.id })
         socket.emit("error", { message: "Room not found" })
         return
       }
@@ -89,11 +151,23 @@ export const registerSocketHandlers = (io: Server): void => {
       if (isReconnect) {
         await updatePlayerSocket(roomCode, playerId, socket.id)
         io.to(roomCode).emit("player-reconnected", { playerId })
-        console.log(`[socket] ${playerId} reconnected to room ${roomCode}`)
+        socketMetrics.reconnects += 1
+        logSocketEvent("player-reconnected", {
+          roomCode,
+          playerId,
+          socketId: socket.id,
+          details: { count: socketMetrics.reconnects },
+        })
       } else {
         await addPlayer(roomCode, playerId, socket.id)
         io.to(roomCode).emit("player-joined", { playerId })
-        console.log(`[socket] ${playerId} joined room ${roomCode}`)
+        socketMetrics.joinRoomSuccess += 1
+        logSocketEvent("player-joined", {
+          roomCode,
+          playerId,
+          socketId: socket.id,
+          details: { count: socketMetrics.joinRoomSuccess },
+        })
       }
 
       // Send the joining player the current room state — players sorted by join order
@@ -109,6 +183,7 @@ export const registerSocketHandlers = (io: Server): void => {
           })
         : {}
       if (!gameModule) {
+        trackUnsupportedGameType(game.gameType, { roomCode, playerId, socketId: socket.id })
         socket.emit("error", unsupportedGameMessage(game.gameType))
       }
 
@@ -156,6 +231,7 @@ export const registerSocketHandlers = (io: Server): void => {
 
       const gameModule = resolveGameModule(game.gameType)
       if (!gameModule) {
+        trackUnsupportedGameType(game.gameType, { roomCode, playerId, socketId: socket.id })
         socket.emit("error", unsupportedGameMessage(game.gameType))
         return
       }
@@ -205,6 +281,7 @@ export const registerSocketHandlers = (io: Server): void => {
 
       const gameModule = resolveGameModule(game.gameType)
       if (!gameModule) {
+        trackUnsupportedGameType(game.gameType, { roomCode, playerId, socketId: socket.id })
         socket.emit("error", unsupportedGameMessage(game.gameType))
         return
       }
