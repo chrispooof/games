@@ -14,12 +14,19 @@ if [ -z "$CHANGED" ]; then
   exit 0
 fi
 
-# Filter to ui/ files only and strip the ui/ prefix for vitest
+# Filter changed files by workspace and strip workspace prefix for vitest
 UI_CHANGED=$(echo "$CHANGED" | grep '^ui/' | sed 's|^ui/||' | tr '\n' ' ')
+API_CHANGED=$(echo "$CHANGED" | grep '^api/' | sed 's|^api/||' | tr '\n' ' ')
 
-if [ -z "$UI_CHANGED" ]; then
-  echo "No ui files changed, skipping tests"
+if [ -z "$UI_CHANGED" ] && [ -z "$API_CHANGED" ]; then
+  echo "No ui/api files changed, skipping tests"
   exit 0
 fi
 
-cd ui && npx vitest related --passWithNoTests $UI_CHANGED
+if [ -n "$UI_CHANGED" ]; then
+  (cd ui && npx vitest related --passWithNoTests $UI_CHANGED) || exit 1
+fi
+
+if [ -n "$API_CHANGED" ]; then
+  (cd api && npx vitest related --passWithNoTests $API_CHANGED) || exit 1
+fi
