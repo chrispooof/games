@@ -66,6 +66,7 @@ export const addPlayer = async (
   roomCode: string,
   playerId: string,
   socketId: string,
+  username?: string,
 ): Promise<void> => {
   await PlayerEntity.build(PutItemCommand)
     .item({
@@ -73,6 +74,7 @@ export const addPlayer = async (
       SK: `PLAYER#${playerId}`,
       playerId,
       socketId,
+      ...(username ? { username } : {}),
       ttl: ttlInSeconds(),
     })
     .send()

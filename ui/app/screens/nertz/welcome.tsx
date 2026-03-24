@@ -2,12 +2,14 @@ import { useState } from "react"
 import { trpc } from "~/lib/trpc"
 import { socket } from "~/lib/socket"
 import { getPlayerId } from "~/lib/player-id"
+import { getUsername, setUsername } from "~/lib/username"
 import Button from "~/components/button"
 
 type View = "welcome" | "hosting" | "joining"
 
 interface PlayerRef {
   playerId: string
+  username?: string
 }
 
 interface GameState {
@@ -42,13 +44,14 @@ const NertzWelcome = ({ onHost, onJoin }: NertzWelcomeProps) => {
   const [playerCount, setPlayerCount] = useState(2)
   const [joinCode, setJoinCode] = useState("")
   const [joinError, setJoinError] = useState<string | null>(null)
+  const [username, setUsernameState] = useState(() => getUsername())
 
   const createGame = trpc.game.create.useMutation({
     onSuccess: (data) => {
       // Host also joins the room via socket so they receive real-time events
       socket.connect()
       socket.once("connect", () => {
-        socket.emit("join-room", { roomCode: data.roomCode, playerId: getPlayerId() })
+        socket.emit("join-room", { roomCode: data.roomCode, playerId: getPlayerId(), username })
       })
       socket.once(
         "room-state",
@@ -89,7 +92,7 @@ const NertzWelcome = ({ onHost, onJoin }: NertzWelcomeProps) => {
     socket.connect()
     socket.once("connect", () => {
       setIsLoading(true)
-      socket.emit("join-room", { roomCode: code, playerId: getPlayerId() })
+      socket.emit("join-room", { roomCode: code, playerId: getPlayerId(), username })
     })
 
     const onRoomState = ({
@@ -134,6 +137,22 @@ const NertzWelcome = ({ onHost, onJoin }: NertzWelcomeProps) => {
           </div>
 
           <h1 className="text-8xl font-black text-white tracking-tight drop-shadow-2xl">Nertz!</h1>
+
+          <div className="flex flex-col items-center gap-3 w-72">
+            <label className="text-white/60 font-medium text-xs uppercase tracking-wider self-start">
+              Your Name
+            </label>
+            <input
+              type="text"
+              maxLength={24}
+              value={username}
+              onChange={(e) => {
+                setUsernameState(e.target.value)
+                setUsername(e.target.value)
+              }}
+              className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-lg text-white text-lg font-bold text-center focus:outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-400/30"
+            />
+          </div>
 
           <div className="flex gap-4">
             <Button onClick={() => setView("hosting")}>Host a Game</Button>

@@ -7,6 +7,7 @@ import { ROOM_CODE_LENGTH } from "../utils/constants"
 export const JoinRoomSchema = z.object({
   roomCode: z.string().length(ROOM_CODE_LENGTH),
   playerId: z.string().min(1),
+  username: z.string().min(1).max(24).optional(),
 })
 
 export type SocketEmitTarget = "actor" | "others" | "room"

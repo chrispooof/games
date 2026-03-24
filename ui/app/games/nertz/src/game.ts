@@ -145,6 +145,8 @@ export class NertzGame {
   private playerIds: string[] = []
   /** Local player's ID */
   private localPlayerId = ""
+  /** Display names keyed by playerId */
+  private usernames: Map<string, string> = new Map()
 
   /** Offscreen renderer for capturing card face images */
   private miniRenderer: THREE.WebGLRenderer | null = null
@@ -322,9 +324,10 @@ export class NertzGame {
    * Sets ordered player IDs and local player ID so opponent overlays can be created.
    * Call after construction from the route component.
    */
-  setPlayerIds(playerIds: string[], localPlayerId: string): void {
+  setPlayerIds(playerIds: string[], localPlayerId: string, usernames?: Map<string, string>): void {
     this.playerIds = playerIds
     this.localPlayerId = localPlayerId
+    if (usernames) this.usernames = usernames
     this.setupOpponentOverlays()
   }
 
@@ -358,12 +361,25 @@ export class NertzGame {
         "box-shadow:0 2px 6px rgba(0,0,0,0.4);background:#555;display:block;"
       el.appendChild(img)
 
-      // Nertz pile count
+      // Username + nertz pile count stacked in a column
+      const info = document.createElement("div")
+      info.style.cssText = "display:flex;flex-direction:column;align-items:center;gap:2px;"
+
+      const name = document.createElement("span")
+      name.setAttribute("data-username", "")
+      name.textContent = this.usernames.get(opp.id) ?? ""
+      name.style.cssText =
+        "font-size:11px;opacity:0.7;max-width:90px;overflow:hidden;" +
+        "text-overflow:ellipsis;white-space:nowrap;text-align:center;"
+      info.appendChild(name)
+
       const count = document.createElement("span")
       count.setAttribute("data-count", "")
       count.textContent = "13"
       count.style.cssText = "font-size:20px;min-width:22px;text-align:center;"
-      el.appendChild(count)
+      info.appendChild(count)
+
+      el.appendChild(info)
 
       this.container.appendChild(el)
       this.opponentEls.set(opp.id, el)

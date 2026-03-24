@@ -120,7 +120,7 @@ export const registerSocketHandlers = (io: Server): void => {
         socket.emit("error", { message: "Invalid join-room payload" })
         return
       }
-      const { roomCode, playerId } = parsed.data
+      const { roomCode, playerId, username } = parsed.data
       socket.join(roomCode)
       socketToPlayer.set(socket.id, { roomCode, playerId })
       logSocketEvent("join-room-attempt", {
@@ -159,8 +159,8 @@ export const registerSocketHandlers = (io: Server): void => {
           details: { count: socketMetrics.reconnects },
         })
       } else {
-        await addPlayer(roomCode, playerId, socket.id)
-        io.to(roomCode).emit("player-joined", { playerId })
+        await addPlayer(roomCode, playerId, socket.id, username)
+        io.to(roomCode).emit("player-joined", { playerId, username })
         socketMetrics.joinRoomSuccess += 1
         logSocketEvent("player-joined", {
           roomCode,

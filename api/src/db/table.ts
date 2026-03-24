@@ -44,6 +44,7 @@ export const PlayerEntity = new Entity({
     SK: string().key(),
     playerId: string(),
     socketId: string(),
+    username: string().optional(),
     ttl: number().optional(),
   }),
 })

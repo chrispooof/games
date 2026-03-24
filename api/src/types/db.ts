@@ -17,6 +17,7 @@ export interface GamePlayer {
   playerId: string
   socketId: string
   joinedAt: string
+  username?: string
 }
 
 /** Persisted game-state payload wrapper keyed by room code. */

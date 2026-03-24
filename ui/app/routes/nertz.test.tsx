@@ -55,6 +55,12 @@ vi.mock("~/lib/player-id", () => ({
   getPlayerId: () => "local-1",
 }))
 
+vi.mock("~/lib/username", () => ({
+  getUsername: () => "SillyBadger",
+  setUsername: vi.fn(),
+  generateSillyUsername: () => "SillyBadger",
+}))
+
 type HostCallback = (
   playerCount: number,
   roomCode: string,
@@ -95,6 +101,7 @@ describe("Nertz reconnect path", () => {
     expect(socketMock.emit).toHaveBeenCalledWith("join-room", {
       roomCode: "ABC123",
       playerId: "local-1",
+      username: "SillyBadger",
     })
 
     const localPileState = {

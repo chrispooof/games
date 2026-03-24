@@ -5,6 +5,7 @@ import { PLAYER_BACK_COLORS } from "~/games/nertz/src/world/player-deck"
 import NertzWelcome from "~/screens/nertz/welcome"
 import { socket } from "~/lib/socket"
 import { getPlayerId } from "~/lib/player-id"
+import { getUsername } from "~/lib/username"
 import type { ActionResult } from "~/games/nertz/src/types/actions"
 import type { InitialLocalPileState } from "~/games/nertz/src/game"
 
@@ -14,6 +15,7 @@ export const meta: Route.MetaFunction = () => {
 
 interface PlayerRef {
   playerId: string
+  username?: string
 }
 
 interface GameState {
@@ -49,6 +51,7 @@ interface Notification {
 export default function NertzRoute() {
   const [scene, setScene] = useState<Scene>({ type: "lobby" })
   const [players, setPlayers] = useState<string[]>([])
+  const [usernames, setUsernames] = useState<Map<string, string>>(new Map())
   const [disconnected, setDisconnected] = useState<Set<string>>(new Set())
   const [notification, setNotification] = useState<Notification | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -93,7 +96,8 @@ export default function NertzRoute() {
     )
     game.setPlayerIds(
       scene.initialPlayers.map((p) => p.playerId),
-      getPlayerId()
+      getPlayerId(),
+      usernames
     )
     if (scene.gameState?.nertzCounts) {
       game.updateOpponentCounts(scene.gameState.nertzCounts, scene.gameState.nertzTops)
@@ -114,19 +118,22 @@ export default function NertzRoute() {
 
     /** Re-join the room if the socket auto-reconnects after a network blip */
     const onConnect = () => {
-      socket.emit("join-room", { roomCode, playerId: getPlayerId() })
+      socket.emit("join-room", { roomCode, playerId: getPlayerId(), username: getUsername() })
     }
 
-    const onPlayerJoined = ({ playerId }: { playerId: string }) => {
+    const onPlayerJoined = ({ playerId, username }: { playerId: string; username?: string }) => {
       setPlayers((prev) => {
         if (prev.includes(playerId)) return prev
         const index = prev.length
         const color = `#${PLAYER_BACK_COLORS[index % PLAYER_BACK_COLORS.length].toString(16).padStart(6, "0")}`
-        setNotification({ message: `Player ${index + 1} joined`, color })
+        setNotification({ message: `${username ?? "A player"} joined`, color })
         setTimeout(() => setNotification(null), 3000)
         gameRef.current?.addPlayer()
         const updated = [...prev, playerId]
-        gameRef.current?.setPlayerIds(updated, getPlayerId())
+        // Build updated usernames inline so the new entry is visible to setPlayerIds
+        const updatedUsernames = username ? new Map(usernames).set(playerId, username) : usernames
+        setUsernames(updatedUsernames)
+        gameRef.current?.setPlayerIds(updated, getPlayerId(), updatedUsernames)
         return updated
       })
     }
@@ -137,8 +144,12 @@ export default function NertzRoute() {
         next.delete(playerId)
         return next
       })
-      setNotification({ message: "A player reconnected", color: "#ffffff" })
-      setTimeout(() => setNotification(null), 2000)
+      setUsernames((prev) => {
+        const name = prev.get(playerId)
+        setNotification({ message: `${name ?? "A player"} reconnected`, color: "#ffffff" })
+        setTimeout(() => setNotification(null), 2000)
+        return prev
+      })
     }
 
     const onPlayerDisconnected = ({ playerId }: { playerId: string }) => {
@@ -211,7 +222,8 @@ export default function NertzRoute() {
         winnerIndex >= 0
           ? `#${PLAYER_BACK_COLORS[winnerIndex % PLAYER_BACK_COLORS.length].toString(16).padStart(6, "0")}`
           : "#ffffff"
-      setNotification({ message: `Player ${winnerIndex + 1} wins! 🎉`, color })
+      const winnerName = usernames.get(winnerId) ?? `Player ${winnerIndex + 1}`
+      setNotification({ message: `${winnerName} wins! 🎉`, color })
     }
 
     socket.on("connect", onConnect)
@@ -244,10 +256,16 @@ export default function NertzRoute() {
       <NertzWelcome
         onHost={(playerCount, roomCode, initialPlayers, gameState, maxPlayers) => {
           setPlayers(initialPlayers.map((p) => p.playerId))
+          setUsernames(
+            new Map(initialPlayers.filter((p) => p.username).map((p) => [p.playerId, p.username!]))
+          )
           setScene({ type: "game", roomCode, maxPlayers, isHost: true, initialPlayers, gameState })
         }}
         onJoin={(roomCode, initialPlayers, gameState, maxPlayers) => {
           setPlayers(initialPlayers.map((p) => p.playerId))
+          setUsernames(
+            new Map(initialPlayers.filter((p) => p.username).map((p) => [p.playerId, p.username!]))
+          )
           setScene({
             type: "game",
             roomCode,
@@ -277,7 +295,7 @@ export default function NertzRoute() {
         {players.map((id, i) => (
           <div
             key={id}
-            title={id}
+            title={usernames.get(id) ?? id}
             className={`w-6 h-6 rounded-full border-2 border-white/30 transition-opacity ${
               disconnected.has(id) ? "opacity-30" : "opacity-100"
             }`}
