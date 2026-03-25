@@ -3,6 +3,7 @@ import type { Route } from "./+types/nertz"
 import { NertzGame } from "~/games"
 import { PLAYER_BACK_COLORS } from "~/games/nertz/src/world/player-deck"
 import NertzWelcome from "~/screens/nertz/welcome"
+import RulesOverlay from "~/screens/nertz/rules-overlay"
 import { socket } from "~/lib/socket"
 import { getPlayerId } from "~/lib/player-id"
 import { getUsername } from "~/lib/username"
@@ -60,6 +61,7 @@ export default function NertzRoute() {
   const [startedAt, setStartedAt] = useState<number | null>(null)
   const [elapsed, setElapsed] = useState("0:00")
   const [nertzEmpty, setNertzEmpty] = useState(false)
+  const [showRules, setShowRules] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
   const gameRef = useRef<NertzGame | null>(null)
 
@@ -410,6 +412,16 @@ export default function NertzRoute() {
           Flip Stock
         </button>
       </div>
+
+      {/* ? rules button */}
+      <button
+        onClick={() => setShowRules(true)}
+        className="absolute bottom-4 left-4 z-10 w-8 h-8 rounded-full bg-black/60 backdrop-blur-sm border border-white/10 text-white/70 text-sm font-bold hover:bg-white/10 hover:text-white transition-all select-none"
+      >
+        ?
+      </button>
+
+      {showRules && <RulesOverlay onClose={() => setShowRules(false)} />}
 
       <div ref={containerRef} className="absolute inset-0" />
     </div>

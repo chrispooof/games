@@ -4,6 +4,7 @@ import { socket } from "~/lib/socket"
 import { getPlayerId } from "~/lib/player-id"
 import { getUsername, setUsername } from "~/lib/username"
 import Button from "~/components/button"
+import RulesOverlay from "~/screens/nertz/rules-overlay"
 
 type View = "welcome" | "hosting" | "joining"
 
@@ -42,6 +43,7 @@ interface NertzWelcomeProps {
  */
 const NertzWelcome = ({ onHost, onJoin }: NertzWelcomeProps) => {
   const [view, setView] = useState<View>("welcome")
+  const [showRules, setShowRules] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [playerCount, setPlayerCount] = useState(2)
   const [joinCode, setJoinCode] = useState("")
@@ -134,7 +136,7 @@ const NertzWelcome = ({ onHost, onJoin }: NertzWelcomeProps) => {
   }
 
   return (
-    <div className="flex-1 flex items-center justify-center bg-[#1a472a] rounded-xl min-h-0">
+    <div className="relative flex-1 flex items-center justify-center bg-[#1a472a] rounded-xl min-h-0">
       {view === "welcome" && (
         <div className="flex flex-col items-center gap-10">
           <div className="flex gap-6 text-4xl opacity-30 select-none">
@@ -201,6 +203,15 @@ const NertzWelcome = ({ onHost, onJoin }: NertzWelcomeProps) => {
           </Button>
         </div>
       )}
+
+      <button
+        onClick={() => setShowRules(true)}
+        className="absolute bottom-4 left-4 w-8 h-8 rounded-full bg-black/60 backdrop-blur-sm border border-white/10 text-white/70 text-sm font-bold hover:bg-white/10 hover:text-white transition-all select-none"
+      >
+        ?
+      </button>
+
+      {showRules && <RulesOverlay onClose={() => setShowRules(false)} />}
 
       {view === "joining" && (
         <div className="flex flex-col items-center gap-8 bg-black/20 rounded-2xl p-10 shadow-2xl border border-white/10 w-80">
