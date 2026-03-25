@@ -326,7 +326,7 @@ export default function NertzRoute() {
             type: "game",
             roomCode,
             maxPlayers,
-            isHost: false,
+            isHost: initialPlayers[0]?.playerId === getPlayerId(),
             initialPlayers,
             gameState,
           })
