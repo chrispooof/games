@@ -8,6 +8,7 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    environment: prod
     permissions:
       contents: write
 
@@ -25,6 +26,8 @@ jobs:
         run: npm ci
 
       - name: Build UI
+        env:
+          VITE_API_URL: ${{ vars.VITE_API_URL }}
         run: npx nx run @games/ui:build
 
       - name: Copy index.html to 404.html for SPA routing

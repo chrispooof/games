@@ -47,10 +47,14 @@ const NertzWelcome = ({ onHost, onJoin }: NertzWelcomeProps) => {
   const [isLoading, setIsLoading] = useState(false)
   const [playerCount, setPlayerCount] = useState(2)
   const [joinCode, setJoinCode] = useState("")
+  const [createError, setCreateError] = useState<string | null>(null)
   const [joinError, setJoinError] = useState<string | null>(null)
   const [username, setUsernameState] = useState(() => getUsername())
 
   const createGame = trpc.game.create.useMutation({
+    onMutate: () => {
+      setCreateError(null)
+    },
     onSuccess: (data) => {
       // Host also joins the room via socket so they receive real-time events
       socket.connect()
@@ -82,6 +86,9 @@ const NertzWelcome = ({ onHost, onJoin }: NertzWelcomeProps) => {
           onHost(playerCount, data.roomCode, players, state, maxPlayers)
         }
       )
+    },
+    onError: () => {
+      setCreateError("Unable to create a game right now. Please try again in a moment.")
     },
   })
 
@@ -197,6 +204,8 @@ const NertzWelcome = ({ onHost, onJoin }: NertzWelcomeProps) => {
           <Button onClick={handleCreate} isLoading={createGame.isPending} className="w-full">
             Create Game
           </Button>
+
+          {createError && <p className="text-red-400 text-sm text-center -mt-4">{createError}</p>}
 
           <Button variant="tertiary" onClick={() => setView("welcome")}>
             ← Back

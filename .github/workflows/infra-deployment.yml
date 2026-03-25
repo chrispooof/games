@@ -1,0 +1,56 @@
+name: Deploy Infrastructure
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/infra-deployment.yml
+      - infra/**
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        environment:
+          - prod
+    environment: ${{ matrix.environment }}
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ vars.AWS_REGION }}
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+
+      - name: Deploy DynamoDB stack
+        run: |
+          aws cloudformation deploy \
+            --stack-name "games-${{ matrix.environment }}-dynamodb" \
+            --template-file infra/dynamodb.yml \
+            --no-fail-on-empty-changeset \
+            --parameter-overrides \
+              EnvironmentName=${{ matrix.environment }} \
+              TableName=${{ vars.DYNAMODB_TABLE_NAME }}
+
+      - name: Deploy API EC2 stack
+        run: |
+          aws cloudformation deploy \
+            --stack-name "games-${{ matrix.environment }}-api" \
+            --template-file infra/api-ec2.yml \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --no-fail-on-empty-changeset \
+            --parameter-overrides \
+              EnvironmentName=${{ matrix.environment }} \
+              DynamoDbTableName=${{ vars.DYNAMODB_TABLE_NAME }} \
+              InstanceType=${{ vars.API_INSTANCE_TYPE }} \
+              AmiId=${{ vars.API_AMI_ID }}

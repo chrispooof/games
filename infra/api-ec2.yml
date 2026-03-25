@@ -1,0 +1,343 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: EC2 infrastructure for the Socket.io API deployment
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: dev
+    Description: Environment suffix used in tags and names
+  InstanceType:
+    Type: String
+    Default: t4g.micro
+    Description: EC2 instance type for the API host
+  AmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64
+    Description: SSM parameter for the Amazon Linux AMI
+  ApiPort:
+    Type: Number
+    Default: 3001
+    Description: Internal API port exposed by the Node service
+  DynamoDbTableName:
+    Type: String
+    Default: CardGames
+    Description: DynamoDB table name the API instance is allowed to access
+  VpcCidr:
+    Type: String
+    Default: 10.20.0.0/16
+    Description: CIDR block for the API VPC
+  PublicSubnetCidr:
+    Type: String
+    Default: 10.20.1.0/24
+    Description: CIDR block for the public subnet
+
+Resources:
+  ApiArtifactBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireOldArtifacts
+            Status: Enabled
+            ExpirationInDays: 30
+      Tags:
+        - Key: Project
+          Value: games
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  ApiVpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCidr
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: !Sub games-${EnvironmentName}-vpc
+        - Key: Project
+          Value: games
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  ApiInternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub games-${EnvironmentName}-igw
+        - Key: Project
+          Value: games
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  ApiInternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref ApiInternetGateway
+      VpcId: !Ref ApiVpc
+
+  ApiPublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      CidrBlock: !Ref PublicSubnetCidr
+      MapPublicIpOnLaunch: true
+      VpcId: !Ref ApiVpc
+      Tags:
+        - Key: Name
+          Value: !Sub games-${EnvironmentName}-public-subnet
+        - Key: Project
+          Value: games
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  ApiPublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref ApiVpc
+      Tags:
+        - Key: Name
+          Value: !Sub games-${EnvironmentName}-public-rt
+        - Key: Project
+          Value: games
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  ApiDefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: ApiInternetGatewayAttachment
+    Properties:
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref ApiInternetGateway
+      RouteTableId: !Ref ApiPublicRouteTable
+
+  ApiSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref ApiPublicRouteTable
+      SubnetId: !Ref ApiPublicSubnet
+
+  ApiSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Public access to the games API
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          CidrIp: 0.0.0.0/0
+          FromPort: !Ref ApiPort
+          ToPort: !Ref ApiPort
+      VpcId: !Ref ApiVpc
+      Tags:
+        - Key: Name
+          Value: !Sub games-${EnvironmentName}-api-sg
+        - Key: Project
+          Value: games
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  ApiInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: ArtifactBucketReadAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt ApiArtifactBucket.Arn
+                  - !Sub "${ApiArtifactBucket.Arn}/*"
+        - PolicyName: DynamoDbGameTableAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:DeleteItem
+                  - dynamodb:DescribeTable
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:Query
+                  - dynamodb:UpdateItem
+                Resource: !Sub "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${DynamoDbTableName}"
+      Tags:
+        - Key: Project
+          Value: games
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  ApiInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref ApiInstanceRole
+
+  ApiElasticIp:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !Sub games-${EnvironmentName}-api-eip
+        - Key: Project
+          Value: games
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  ApiInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      IamInstanceProfile: !Ref ApiInstanceProfile
+      ImageId: !Ref AmiId
+      InstanceType: !Ref InstanceType
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: true
+          DeviceIndex: "0"
+          GroupSet:
+            - !Ref ApiSecurityGroup
+          SubnetId: !Ref ApiPublicSubnet
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -euxo pipefail
+
+          dnf update -y
+          dnf install -y tar unzip awscli
+          curl -fsSL https://rpm.nodesource.com/setup_22.x | bash -
+          dnf install -y nodejs
+
+          mkdir -p /opt/games-api/releases
+          mkdir -p /etc/games-api
+
+          cat >/usr/local/bin/deploy-games-api <<'EOF'
+          #!/bin/bash
+          set -euxo pipefail
+
+          ARTIFACT_URI="$1"
+          ENV_URI="$2"
+          RELEASE_DIR="/opt/games-api/releases/${EnvironmentName}"
+
+          rm -rf "$RELEASE_DIR"
+          mkdir -p "$RELEASE_DIR"
+
+          aws s3 cp "$ARTIFACT_URI" /tmp/games-api-release.tgz
+          aws s3 cp "$ENV_URI" /etc/games-api/api.env
+
+          tar -xzf /tmp/games-api-release.tgz -C "$RELEASE_DIR"
+          cd "$RELEASE_DIR"
+          npm ci --omit=dev --workspace api
+
+          ln -sfn "$RELEASE_DIR" /opt/games-api/current
+          systemctl daemon-reload
+          systemctl restart games-api.service
+          EOF
+
+          chmod +x /usr/local/bin/deploy-games-api
+
+          cat >/etc/systemd/system/games-api.service <<EOF
+          [Unit]
+          Description=Games API
+          After=network.target
+
+          [Service]
+          Type=simple
+          User=root
+          WorkingDirectory=/opt/games-api/current
+          EnvironmentFile=/etc/games-api/api.env
+          ExecStart=/usr/bin/npm run start -w api
+          Restart=always
+          RestartSec=5
+
+          [Install]
+          WantedBy=multi-user.target
+          EOF
+
+          systemctl daemon-reload
+          systemctl enable games-api.service
+      Tags:
+        - Key: Name
+          Value: !Sub games-${EnvironmentName}-api
+        - Key: Project
+          Value: games
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  ApiElasticIpAssociation:
+    Type: AWS::EC2::EIPAssociation
+    Properties:
+      AllocationId: !GetAtt ApiElasticIp.AllocationId
+      InstanceId: !Ref ApiInstance
+
+  ApiDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        HttpVersion: http2
+        DefaultCacheBehavior:
+          AllowedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+            - PUT
+            - PATCH
+            - POST
+            - DELETE
+          CachedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+          Compress: true
+          ForwardedValues:
+            Cookies:
+              Forward: all
+            Headers:
+              - Origin
+              - Access-Control-Request-Headers
+              - Access-Control-Request-Method
+            QueryString: true
+          TargetOriginId: api-origin
+          ViewerProtocolPolicy: redirect-to-https
+        DefaultRootObject: ""
+        Origins:
+          - DomainName: !GetAtt ApiInstance.PublicDnsName
+            Id: api-origin
+            CustomOriginConfig:
+              HTTPPort: !Ref ApiPort
+              OriginProtocolPolicy: http-only
+        PriceClass: PriceClass_100
+        ViewerCertificate:
+          CloudFrontDefaultCertificate: true
+
+Outputs:
+  ArtifactBucketName:
+    Description: S3 bucket used for API deployment artifacts
+    Value: !Ref ApiArtifactBucket
+  InstanceId:
+    Description: EC2 instance id for SSM-based deployments
+    Value: !Ref ApiInstance
+  DistributionUrl:
+    Description: HTTPS URL for browser traffic to the API
+    Value: !Sub "https://${ApiDistribution.DomainName}"

@@ -13,6 +13,8 @@ import type { SocketEmitMessage, SocketLogMeta, SocketMetrics } from "../types/s
 import { RECONNECT_GRACE_MS } from "../utils/constants"
 import { JoinRoomSchema } from "../types/socket"
 
+const INTERNAL_SOCKET_ERROR_MESSAGE = "Something went wrong. Please try again."
+
 /** socketId → { roomCode, playerId } — tracks which room/player each socket belongs to */
 const socketToPlayer = new Map<string, { roomCode: string; playerId: string }>()
 
@@ -97,6 +99,18 @@ const unsupportedGameMessage = (gameType: string): { message: string } => ({
   message: `Unsupported game type: ${gameType}`,
 })
 
+/** Logs unexpected socket handler failures and emits a client-safe error. */
+const emitInternalSocketError = (
+  socket: Socket,
+  event: string,
+  meta: SocketLogMeta,
+  error: unknown,
+): void => {
+  console.error(`[socket] ${event} failed`, error)
+  logSocketEvent(`${event}-internal-error`, meta)
+  socket.emit("error", { message: INTERNAL_SOCKET_ERROR_MESSAGE })
+}
+
 /**
  * Registers all Socket.io event handlers on the server.
  * Handles player join/reconnect, disconnect with grace period, and game actions.
@@ -121,78 +135,79 @@ export const registerSocketHandlers = (io: Server): void => {
         return
       }
       const { roomCode, playerId, username } = parsed.data
-      socket.join(roomCode)
-      socketToPlayer.set(socket.id, { roomCode, playerId })
-      logSocketEvent("join-room-attempt", {
-        roomCode,
-        playerId,
-        socketId: socket.id,
-        details: { count: socketMetrics.joinRoomAttempts },
-      })
-      // Validate if room exists
-      const game = await getGame(roomCode)
-      if (!game) {
-        logSocketEvent("join-room-room-not-found", { roomCode, playerId, socketId: socket.id })
-        socket.emit("error", { message: "Room not found" })
-        return
-      }
-
-      // Cancel any pending removal from a previous disconnect
-      const pendingTimer = disconnectTimers.get(playerId)
-      if (pendingTimer) {
-        clearTimeout(pendingTimer)
-        disconnectTimers.delete(playerId)
-      }
-
-      // Determine if this is a reconnection or a fresh join
-      const currentPlayers = await getPlayers(roomCode)
-      const isReconnect = currentPlayers.some((p) => p.playerId === playerId)
-
-      if (isReconnect) {
-        await updatePlayerSocket(roomCode, playerId, socket.id)
-        io.to(roomCode).emit("player-reconnected", { playerId })
-        socketMetrics.reconnects += 1
-        logSocketEvent("player-reconnected", {
+      try {
+        socket.join(roomCode)
+        socketToPlayer.set(socket.id, { roomCode, playerId })
+        logSocketEvent("join-room-attempt", {
           roomCode,
           playerId,
           socketId: socket.id,
-          details: { count: socketMetrics.reconnects },
+          details: { count: socketMetrics.joinRoomAttempts },
         })
-      } else {
-        await addPlayer(roomCode, playerId, socket.id, username)
-        io.to(roomCode).emit("player-joined", { playerId, username })
-        socketMetrics.joinRoomSuccess += 1
-        logSocketEvent("player-joined", {
-          roomCode,
-          playerId,
-          socketId: socket.id,
-          details: { count: socketMetrics.joinRoomSuccess },
-        })
-      }
 
-      // Send the joining player the current room state — players sorted by join order
-      const [players, gameState] = await Promise.all([getPlayers(roomCode), getGameState(roomCode)])
-      const sortedPlayers = [...players].sort(
-        (a, b) => new Date(a.joinedAt).getTime() - new Date(b.joinedAt).getTime(),
-      )
+        const game = await getGame(roomCode)
+        if (!game) {
+          logSocketEvent("join-room-room-not-found", { roomCode, playerId, socketId: socket.id })
+          socket.emit("error", { message: "Room not found" })
+          return
+        }
 
-      const gameModule = resolveGameModule(game.gameType)
-      const moduleExtras = gameModule?.buildRoomStateExtras
-        ? gameModule.buildRoomStateExtras({
-            gameState: (gameState?.state as Record<string, unknown> | undefined) ?? null,
+        const pendingTimer = disconnectTimers.get(playerId)
+        if (pendingTimer) {
+          clearTimeout(pendingTimer)
+          disconnectTimers.delete(playerId)
+        }
+
+        const currentPlayers = await getPlayers(roomCode)
+        const isReconnect = currentPlayers.some((p) => p.playerId === playerId)
+
+        if (isReconnect) {
+          await updatePlayerSocket(roomCode, playerId, socket.id)
+          io.to(roomCode).emit("player-reconnected", { playerId })
+          socketMetrics.reconnects += 1
+          logSocketEvent("player-reconnected", {
+            roomCode,
+            playerId,
+            socketId: socket.id,
+            details: { count: socketMetrics.reconnects },
           })
-        : {}
-      if (!gameModule) {
-        trackUnsupportedGameType(game.gameType, { roomCode, playerId, socketId: socket.id })
-        socket.emit("error", unsupportedGameMessage(game.gameType))
-      }
+        } else {
+          await addPlayer(roomCode, playerId, socket.id, username)
+          io.to(roomCode).emit("player-joined", { playerId, username })
+          socketMetrics.joinRoomSuccess += 1
+          logSocketEvent("player-joined", {
+            roomCode,
+            playerId,
+            socketId: socket.id,
+            details: { count: socketMetrics.joinRoomSuccess },
+          })
+        }
 
-      socket.emit("room-state", {
-        players: sortedPlayers,
-        maxPlayers: game.playerCount,
-        gameState: gameState?.state ?? null,
-        ...moduleExtras,
-      })
+        const [players, gameState] = await Promise.all([getPlayers(roomCode), getGameState(roomCode)])
+        const sortedPlayers = [...players].sort(
+          (a, b) => new Date(a.joinedAt).getTime() - new Date(b.joinedAt).getTime(),
+        )
+
+        const gameModule = resolveGameModule(game.gameType)
+        const moduleExtras = gameModule?.buildRoomStateExtras
+          ? gameModule.buildRoomStateExtras({
+              gameState: (gameState?.state as Record<string, unknown> | undefined) ?? null,
+            })
+          : {}
+        if (!gameModule) {
+          trackUnsupportedGameType(game.gameType, { roomCode, playerId, socketId: socket.id })
+          socket.emit("error", unsupportedGameMessage(game.gameType))
+        }
+
+        socket.emit("room-state", {
+          players: sortedPlayers,
+          maxPlayers: game.playerCount,
+          gameState: gameState?.state ?? null,
+          ...moduleExtras,
+        })
+      } catch (error) {
+        emitInternalSocketError(socket, "join-room", { roomCode, playerId, socketId: socket.id }, error)
+      }
     })
 
     /**
@@ -223,39 +238,43 @@ export const registerSocketHandlers = (io: Server): void => {
       if (!entry) return
       const { roomCode, playerId } = entry
 
-      const [game, current] = await Promise.all([getGame(roomCode), getGameState(roomCode)])
-      if (!game) {
-        socket.emit("error", { message: "Room not found" })
-        return
-      }
-
-      const gameModule = resolveGameModule(game.gameType)
-      if (!gameModule) {
-        trackUnsupportedGameType(game.gameType, { roomCode, playerId, socketId: socket.id })
-        socket.emit("error", unsupportedGameMessage(game.gameType))
-        return
-      }
-      if (gameModule.gameActionSchema) {
-        const parsedAction = gameModule.gameActionSchema.safeParse(action)
-        if (!parsedAction.success) {
-          socket.emit("error", { message: `Invalid game-action payload for game type: ${game.gameType}` })
+      try {
+        const [game, current] = await Promise.all([getGame(roomCode), getGameState(roomCode)])
+        if (!game) {
+          socket.emit("error", { message: "Room not found" })
           return
         }
-        action = parsedAction.data
+
+        const gameModule = resolveGameModule(game.gameType)
+        if (!gameModule) {
+          trackUnsupportedGameType(game.gameType, { roomCode, playerId, socketId: socket.id })
+          socket.emit("error", unsupportedGameMessage(game.gameType))
+          return
+        }
+        if (gameModule.gameActionSchema) {
+          const parsedAction = gameModule.gameActionSchema.safeParse(action)
+          if (!parsedAction.success) {
+            socket.emit("error", { message: `Invalid game-action payload for game type: ${game.gameType}` })
+            return
+          }
+          action = parsedAction.data
+        }
+
+        const out = gameModule.handleGameAction({
+          action,
+          playerId,
+          roomCode,
+          gameState: (current?.state as Record<string, unknown> | undefined) ?? null,
+        })
+
+        if (out.nextState) {
+          await updateGameState(roomCode, game.gameType, out.nextState)
+        }
+
+        emitMessages(io, socket, roomCode, out.emits)
+      } catch (error) {
+        emitInternalSocketError(socket, "game-action", { roomCode, playerId, socketId: socket.id }, error)
       }
-
-      const out = gameModule.handleGameAction({
-        action,
-        playerId,
-        roomCode,
-        gameState: (current?.state as Record<string, unknown> | undefined) ?? null,
-      })
-
-      if (out.nextState) {
-        await updateGameState(roomCode, game.gameType, out.nextState)
-      }
-
-      emitMessages(io, socket, roomCode, out.emits)
     })
 
     /**
@@ -269,48 +288,52 @@ export const registerSocketHandlers = (io: Server): void => {
       if (!entry) return
       const { roomCode, playerId } = entry
 
-      const [game, current, players] = await Promise.all([
-        getGame(roomCode),
-        getGameState(roomCode),
-        getPlayers(roomCode),
-      ])
-      if (!game) {
-        socket.emit("error", { message: "Room not found" })
-        return
-      }
-
-      const gameModule = resolveGameModule(game.gameType)
-      if (!gameModule) {
-        trackUnsupportedGameType(game.gameType, { roomCode, playerId, socketId: socket.id })
-        socket.emit("error", unsupportedGameMessage(game.gameType))
-        return
-      }
-      if (!gameModule.handleSetState) {
-        socket.emit("error", { message: `set-state is not supported for game type: ${game.gameType}` })
-        return
-      }
-      if (gameModule.setStateSchema) {
-        const parsedPayload = gameModule.setStateSchema.safeParse(payload)
-        if (!parsedPayload.success) {
-          socket.emit("error", { message: `Invalid set-state payload for game type: ${game.gameType}` })
+      try {
+        const [game, current, players] = await Promise.all([
+          getGame(roomCode),
+          getGameState(roomCode),
+          getPlayers(roomCode),
+        ])
+        if (!game) {
+          socket.emit("error", { message: "Room not found" })
           return
         }
-        payload = parsedPayload.data
+
+        const gameModule = resolveGameModule(game.gameType)
+        if (!gameModule) {
+          trackUnsupportedGameType(game.gameType, { roomCode, playerId, socketId: socket.id })
+          socket.emit("error", unsupportedGameMessage(game.gameType))
+          return
+        }
+        if (!gameModule.handleSetState) {
+          socket.emit("error", { message: `set-state is not supported for game type: ${game.gameType}` })
+          return
+        }
+        if (gameModule.setStateSchema) {
+          const parsedPayload = gameModule.setStateSchema.safeParse(payload)
+          if (!parsedPayload.success) {
+            socket.emit("error", { message: `Invalid set-state payload for game type: ${game.gameType}` })
+            return
+          }
+          payload = parsedPayload.data
+        }
+
+        const out = gameModule.handleSetState({
+          payload,
+          playerId,
+          numPlayers: game.playerCount,
+          players,
+          gameState: (current?.state as Record<string, unknown> | undefined) ?? null,
+        })
+
+        if (out.nextState) {
+          await updateGameState(roomCode, game.gameType, out.nextState)
+        }
+
+        emitMessages(io, socket, roomCode, out.emits)
+      } catch (error) {
+        emitInternalSocketError(socket, "set-state", { roomCode, playerId, socketId: socket.id }, error)
       }
-
-      const out = gameModule.handleSetState({
-        payload,
-        playerId,
-        numPlayers: game.playerCount,
-        players,
-        gameState: (current?.state as Record<string, unknown> | undefined) ?? null,
-      })
-
-      if (out.nextState) {
-        await updateGameState(roomCode, game.gameType, out.nextState)
-      }
-
-      emitMessages(io, socket, roomCode, out.emits)
     })
 
     /**
@@ -321,23 +344,27 @@ export const registerSocketHandlers = (io: Server): void => {
       if (!entry) return
       const { roomCode, playerId } = entry
 
-      const [game, current, players] = await Promise.all([
-        getGame(roomCode),
-        getGameState(roomCode),
-        getPlayers(roomCode),
-      ])
-      if (!game) return
+      try {
+        const [game, current, players] = await Promise.all([
+          getGame(roomCode),
+          getGameState(roomCode),
+          getPlayers(roomCode),
+        ])
+        if (!game) return
 
-      const gameModule = resolveGameModule(game.gameType)
-      if (!gameModule?.handleStartGame) return
+        const gameModule = resolveGameModule(game.gameType)
+        if (!gameModule?.handleStartGame) return
 
-      const out = gameModule.handleStartGame({
-        playerId,
-        players,
-        gameState: (current?.state as Record<string, unknown> | undefined) ?? null,
-      })
-      if (out.nextState) await updateGameState(roomCode, game.gameType, out.nextState)
-      emitMessages(io, socket, roomCode, out.emits)
+        const out = gameModule.handleStartGame({
+          playerId,
+          players,
+          gameState: (current?.state as Record<string, unknown> | undefined) ?? null,
+        })
+        if (out.nextState) await updateGameState(roomCode, game.gameType, out.nextState)
+        emitMessages(io, socket, roomCode, out.emits)
+      } catch (error) {
+        emitInternalSocketError(socket, "start-game", { roomCode, playerId, socketId: socket.id }, error)
+      }
     })
 
     /**
@@ -348,18 +375,22 @@ export const registerSocketHandlers = (io: Server): void => {
       if (!entry) return
       const { roomCode, playerId } = entry
 
-      const [game, current] = await Promise.all([getGame(roomCode), getGameState(roomCode)])
-      if (!game) return
+      try {
+        const [game, current] = await Promise.all([getGame(roomCode), getGameState(roomCode)])
+        if (!game) return
 
-      const gameModule = resolveGameModule(game.gameType)
-      if (!gameModule?.handleCallNertz) return
+        const gameModule = resolveGameModule(game.gameType)
+        if (!gameModule?.handleCallNertz) return
 
-      const out = gameModule.handleCallNertz({
-        playerId,
-        gameState: (current?.state as Record<string, unknown> | undefined) ?? null,
-      })
-      if (out.nextState) await updateGameState(roomCode, game.gameType, out.nextState)
-      emitMessages(io, socket, roomCode, out.emits)
+        const out = gameModule.handleCallNertz({
+          playerId,
+          gameState: (current?.state as Record<string, unknown> | undefined) ?? null,
+        })
+        if (out.nextState) await updateGameState(roomCode, game.gameType, out.nextState)
+        emitMessages(io, socket, roomCode, out.emits)
+      } catch (error) {
+        emitInternalSocketError(socket, "call-nertz", { roomCode, playerId, socketId: socket.id }, error)
+      }
     })
 
     /**

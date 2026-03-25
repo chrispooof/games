@@ -2,7 +2,6 @@
   "name": "@games/api",
   "private": true,
   "version": "0.0.1",
-  "type": "module",
   "scripts": {
     "db:setup": "tsx scripts/setup-local-db.ts",
     "dev": "tsx watch src/index.ts",

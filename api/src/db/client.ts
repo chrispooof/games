@@ -1,19 +1,16 @@
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb"
 import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb"
-import { DEFAULT_AWS_REGION, DEFAULT_DYNAMODB_TABLE } from "../utils/constants"
-
-const REGION = process.env.AWS_REGION ?? DEFAULT_AWS_REGION
-const ENDPOINT = process.env.DYNAMODB_ENDPOINT
+import { appConfig } from "../config/env"
 
 /**
  * Base DynamoDB client. When DYNAMODB_ENDPOINT is set (local dev),
  * requests are routed to DynamoDB Local instead of AWS.
  */
 const dynamoClient = new DynamoDBClient({
-  region: REGION,
-  ...(ENDPOINT ? { endpoint: ENDPOINT } : {}),
+  region: appConfig.awsRegion,
+  ...(appConfig.dynamoDbEndpoint ? { endpoint: appConfig.dynamoDbEndpoint } : {}),
   // DynamoDB Local doesn't validate credentials, so use dummies in dev
-  ...(ENDPOINT
+  ...(appConfig.dynamoDbEndpoint
     ? { credentials: { accessKeyId: "local", secretAccessKey: "local" } }
     : {}),
 })
@@ -21,4 +18,4 @@ const dynamoClient = new DynamoDBClient({
 export const documentClient = DynamoDBDocumentClient.from(dynamoClient)
 
 /** DynamoDB table used by all Toolbox entities in this API. */
-export const TABLE = process.env.DYNAMODB_TABLE ?? DEFAULT_DYNAMODB_TABLE
+export const TABLE = appConfig.dynamoDbTable

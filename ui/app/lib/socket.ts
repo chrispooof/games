@@ -1,10 +1,9 @@
 import { io } from "socket.io-client"
-
-const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:3001"
+import { publicEnv } from "./env"
 
 /**
  * Shared Socket.io client instance.
  * `autoConnect: false` — call `socket.connect()` explicitly after the player
  * has joined or created a game room.
  */
-export const socket = io(API_URL, { autoConnect: false })
+export const socket = io(publicEnv.apiUrl, { autoConnect: false })

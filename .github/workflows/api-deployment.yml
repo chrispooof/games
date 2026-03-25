@@ -1,0 +1,120 @@
+name: Deploy API
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - api/**
+      - .github/workflows/api-deployment.yml
+      - package.json
+      - package-lock.json
+      - nx.json
+      - tsconfig.base.json
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        environment:
+          - prod
+    environment: ${{ matrix.environment }}
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run API tests
+        run: npm run test -w api
+
+      - name: Build API
+        run: npm run build -w api
+
+      - name: Package API artifact
+        run: |
+          tar -czf api-release.tgz \
+            package.json \
+            package-lock.json \
+            api/package.json \
+            ui/package.json \
+            api/dist
+
+      - name: Prepare runtime environment file
+        run: |
+          cat <<EOF > api.env
+          NODE_ENV=production
+          PORT=3001
+          UI_ORIGIN=${{ vars.UI_ORIGIN }}
+          AWS_REGION=${{ vars.AWS_REGION }}
+          DYNAMODB_TABLE=${{ vars.DYNAMODB_TABLE_NAME }}
+          EOF
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ vars.AWS_REGION }}
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+
+      - name: Discover stack outputs
+        id: stack
+        run: |
+          STACK_NAME="games-${{ matrix.environment }}-api"
+          ARTIFACT_BUCKET="$(aws cloudformation describe-stacks \
+            --stack-name "$STACK_NAME" \
+            --query "Stacks[0].Outputs[?OutputKey=='ArtifactBucketName'].OutputValue" \
+            --output text)"
+          INSTANCE_ID="$(aws cloudformation describe-stacks \
+            --stack-name "$STACK_NAME" \
+            --query "Stacks[0].Outputs[?OutputKey=='InstanceId'].OutputValue" \
+            --output text)"
+          API_BASE_URL="$(aws cloudformation describe-stacks \
+            --stack-name "$STACK_NAME" \
+            --query "Stacks[0].Outputs[?OutputKey=='DistributionUrl'].OutputValue" \
+            --output text)"
+
+          echo "artifact_bucket=$ARTIFACT_BUCKET" >> "$GITHUB_OUTPUT"
+          echo "instance_id=$INSTANCE_ID" >> "$GITHUB_OUTPUT"
+          echo "api_base_url=$API_BASE_URL" >> "$GITHUB_OUTPUT"
+
+      - name: Upload release artifact
+        run: |
+          aws s3 cp api-release.tgz "s3://${{ steps.stack.outputs.artifact_bucket }}/releases/${{ github.sha }}.tgz"
+          aws s3 cp api.env "s3://${{ steps.stack.outputs.artifact_bucket }}/env/${{ matrix.environment }}.env"
+
+      - name: Trigger instance deployment
+        run: |
+          COMMAND_ID="$(aws ssm send-command \
+            --instance-ids "${{ steps.stack.outputs.instance_id }}" \
+            --document-name AWS-RunShellScript \
+            --comment "Deploy games api ${{ github.sha }}" \
+            --parameters "{\"commands\":[\"sudo /usr/local/bin/deploy-games-api s3://${{ steps.stack.outputs.artifact_bucket }}/releases/${{ github.sha }}.tgz s3://${{ steps.stack.outputs.artifact_bucket }}/env/${{ matrix.environment }}.env\"]}" \
+            --query "Command.CommandId" \
+            --output text)"
+
+          aws ssm wait command-executed \
+            --command-id "$COMMAND_ID" \
+            --instance-id "${{ steps.stack.outputs.instance_id }}"
+
+          aws ssm get-command-invocation \
+            --command-id "$COMMAND_ID" \
+            --instance-id "${{ steps.stack.outputs.instance_id }}" \
+            --query "Status" \
+            --output text | grep -qx "Success"
+
+      - name: Verify health endpoint
+        run: curl --fail --retry 10 --retry-delay 6 "${{ steps.stack.outputs.api_base_url }}/health"

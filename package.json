@@ -3,7 +3,7 @@
   "private": true,
   "workspaces": ["ui", "api"],
   "scripts": {
-    "prepare": "husky",
+    "prepare": "command -v husky >/dev/null 2>&1 && husky || true",
     "docker:up": "docker compose up -d",
     "docker:down": "docker compose down",
     "db:setup": "npm run db:setup -w api",

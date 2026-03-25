@@ -203,7 +203,7 @@ export class NertzGame {
         waste: [...initialLocalPileState.waste],
       }
     }
-    // Initialise foundation state: use server state if available, else all empty slots
+    // Initialize foundation state: use server state if available, else all empty slots
     this.localFoundationState =
       initialFoundations ??
       Array.from({ length: maxPlayers * 4 }, () => ({ suit: null, topValue: 0 }))

@@ -230,4 +230,20 @@ describe("socket index dispatch contract", () => {
     expect(handleSetState).not.toHaveBeenCalled()
     expect(updateGameStateMock).not.toHaveBeenCalled()
   })
+
+  it("sanitizes unexpected join-room persistence failures", async () => {
+    getGameMock.mockRejectedValueOnce(new Error("dynamodb access denied"))
+
+    const { registerSocketHandlers } = await import("./index")
+    const io = createFakeIo()
+    const socket = createFakeSocket("sock-internal")
+    registerSocketHandlers(io as any)
+    io.connect(socket)
+
+    await socket.trigger("join-room", { roomCode: "ABC123", playerId: "p1" })
+
+    expect(socket.emit).toHaveBeenCalledWith("error", {
+      message: "Something went wrong. Please try again.",
+    })
+  })
 })

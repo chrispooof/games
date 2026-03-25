@@ -3,30 +3,37 @@ import Fastify from "fastify"
 import cors from "@fastify/cors"
 import { fastifyTRPCPlugin } from "@trpc/server/adapters/fastify"
 import { Server } from "socket.io"
+import { appConfig } from "./config/env"
 import { appRouter } from "./router/index"
 import { createContext } from "./trpc"
 import { registerSocketHandlers } from "./socket/index"
-import { DEFAULT_API_PORT, DEFAULT_UI_ORIGIN } from "./utils/constants"
 
-const PORT = Number(process.env.PORT ?? DEFAULT_API_PORT)
-const UI_ORIGIN = process.env.UI_ORIGIN ?? DEFAULT_UI_ORIGIN
+const start = async () => {
+  const server = Fastify({ logger: true })
 
-const server = Fastify({ logger: true })
+  await server.register(cors, { origin: appConfig.uiOrigin })
 
-await server.register(cors, { origin: UI_ORIGIN })
+  await server.register(fastifyTRPCPlugin, {
+    prefix: "/trpc",
+    trpcOptions: { router: appRouter, createContext },
+  })
 
-await server.register(fastifyTRPCPlugin, {
-  prefix: "/trpc",
-  trpcOptions: { router: appRouter, createContext },
-})
+  /** Lightweight deployment health endpoint used by GitHub Actions and ALB checks. */
+  server.get("/health", async () => ({
+    status: "ok",
+    environment: appConfig.nodeEnv,
+  }))
 
-await server.listen({ port: PORT, host: "0.0.0.0" })
+  await server.listen({ port: appConfig.port, host: "0.0.0.0" })
 
-/** Socket.io attaches to the underlying http.Server after Fastify has started */
-const io = new Server(server.server, {
-  cors: { origin: UI_ORIGIN },
-})
+  /** Socket.io attaches to the underlying http.Server after Fastify has started */
+  const io = new Server(server.server, {
+    cors: { origin: appConfig.uiOrigin },
+  })
 
-registerSocketHandlers(io)
+  registerSocketHandlers(io)
 
-console.log(`API server running on http://0.0.0.0:${PORT}`)
+  console.log(`API server running on http://0.0.0.0:${appConfig.port}`)
+}
+
+start()

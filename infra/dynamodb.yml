@@ -2,6 +2,10 @@ AWSTemplateFormatVersion: "2010-09-09"
 Description: DynamoDB table for card game state (single-table design)
 
 Parameters:
+  EnvironmentName:
+    Type: String
+    Default: dev
+    Description: Environment suffix used for tags and stack naming
   TableName:
     Type: String
     Default: CardGames
@@ -12,6 +16,7 @@ Resources:
     Type: AWS::DynamoDB::Table
     Properties:
       TableName: !Ref TableName
+      BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
         - AttributeName: PK
           AttributeType: S
@@ -30,6 +35,8 @@ Resources:
       Tags:
         - Key: Project
           Value: games
+        - Key: Environment
+          Value: !Ref EnvironmentName
 
 Outputs:
   TableName:
