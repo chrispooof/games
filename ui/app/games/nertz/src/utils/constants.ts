@@ -50,6 +50,9 @@ export const FOUNDATION_OUTLINE_SCALE = 1.2
 /** Scale multiplier for cards placed on foundation piles (easier to read from angled camera) */
 export const FOUNDATION_CARD_SCALE = 1.2
 
+/** Y increment per card in a foundation pile — prevents z-fighting as the pile grows */
+export const FOUNDATION_PILE_Y_STEP = 0.003
+
 /** Directional (key) light color and intensity */
 export const DIR_LIGHT_COLOR = 0xfff5e0
 export const DIR_LIGHT_INTENSITY = 1.5

@@ -31,6 +31,7 @@ import {
   PLAYABLE_GLOW_INTENSITY,
   SCENE_BACKGROUND_COLOR,
   FOUNDATION_CARD_SCALE,
+  FOUNDATION_PILE_Y_STEP,
   SHADOW_CAM_EXTENT,
   SHADOW_CAM_FAR,
   SHADOW_CAM_NEAR,
@@ -733,9 +734,20 @@ export class NertzGame {
 
   /**
    * Computes the y-offset above CARD_Y_OFFSET for a card at the given world position.
-   * Handles nertz pile, stock pile, and work pile stacking to prevent z-fighting.
+   * Handles nertz pile, stock pile, work pile, and foundation stacking to prevent z-fighting.
    */
   private computeCardFanY(cardId: string, x: number, z: number): number {
+    // Foundation piles: each card sits one step above the previous.
+    // Card rank value equals its depth (Ace=1st, 2=2nd, …, King=13th).
+    if (this.foundationArea) {
+      for (const slot of this.foundationArea.slots) {
+        if (Math.abs(x - slot.x) < 0.05 && Math.abs(z - slot.z) < 0.05) {
+          const value = parseCardRankValue(cardId)
+          return Math.max(0, value - 1) * FOUNDATION_PILE_Y_STEP
+        }
+      }
+    }
+
     const match = cardId.match(/^p(\d+)_/)
     if (!match) return 0
     const seat = computeSeat(parseInt(match[1]), this.maxPlayers, this.seatRadius)
@@ -833,6 +845,11 @@ export class NertzGame {
           if (value > 0) {
             this.localFoundationState[action.slotIndex] = { suit: match[2], topValue: value }
             this.dragControls.setFoundationStates(this.localFoundationState)
+            // Correct Y so each card in the pile sits above the previous one
+            if (foundationCard) {
+              foundationCard.object.position.y =
+                CARD_Y_OFFSET + (value - 1) * FOUNDATION_PILE_Y_STEP
+            }
           }
         }
       } else if (action.type === "play-to-work-pile") {
@@ -1013,6 +1030,16 @@ export class NertzGame {
       }
       this.pendingAction = action
       socket.emit("game-action", action)
+      // Optimistically set the correct Y immediately so the card never z-fights
+      // with existing foundation cards during the server round-trip
+      const rankValue = parseCardRankValue(cardId)
+      if (rankValue > 0) {
+        const foundationCard = this.localDeck?.cards.find((c) => c.id === cardId)
+        if (foundationCard) {
+          foundationCard.object.position.y =
+            CARD_Y_OFFSET + (rankValue - 1) * FOUNDATION_PILE_Y_STEP
+        }
+      }
       return
     }
 
