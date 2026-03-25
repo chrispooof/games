@@ -4,6 +4,8 @@ import { NertzGame } from "~/games"
 import { PLAYER_BACK_COLORS } from "~/games/nertz/src/world/player-deck"
 import NertzWelcome from "~/screens/nertz/welcome"
 import RulesOverlay from "~/screens/nertz/rules-overlay"
+import ScoreScreen from "~/screens/nertz/score-screen"
+import type { PlayerScore } from "~/screens/nertz/score-screen"
 import { socket } from "~/lib/socket"
 import { getPlayerId } from "~/lib/player-id"
 import { getUsername } from "~/lib/username"
@@ -62,6 +64,8 @@ export default function NertzRoute() {
   const [elapsed, setElapsed] = useState("0:00")
   const [nertzEmpty, setNertzEmpty] = useState(false)
   const [showRules, setShowRules] = useState(false)
+  const [scores, setScores] = useState<Record<string, PlayerScore>>({})
+  const [winnerId, setWinnerId] = useState<string | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const gameRef = useRef<NertzGame | null>(null)
 
@@ -92,7 +96,7 @@ export default function NertzRoute() {
 
   /** Ticks the elapsed timer once per second while the game is playing */
   useEffect(() => {
-    if (!startedAt || gamePhase === "waiting") return
+    if (!startedAt || gamePhase !== "playing") return
     const tick = () => setElapsed(formatElapsed(Date.now() - startedAt))
     tick()
     const id = setInterval(tick, 1000)
@@ -254,15 +258,23 @@ export default function NertzRoute() {
       gameRef.current?.setGamePhase("playing")
     }
 
-    const onGameOver = ({ winnerId }: { winnerId: string }) => {
+    const onGameOver = ({
+      winnerId: wId,
+      scores: incoming,
+    }: {
+      winnerId: string
+      scores?: Record<string, PlayerScore>
+    }) => {
       setGamePhase("finished")
       gameRef.current?.setGamePhase("finished")
-      const winnerIndex = players.findIndex((id) => id === winnerId)
+      setWinnerId(wId)
+      if (incoming) setScores(incoming)
+      const winnerIndex = players.findIndex((id) => id === wId)
       const color =
         winnerIndex >= 0
           ? `#${PLAYER_BACK_COLORS[winnerIndex % PLAYER_BACK_COLORS.length].toString(16).padStart(6, "0")}`
           : "#ffffff"
-      const winnerName = usernames.get(winnerId) ?? `Player ${winnerIndex + 1}`
+      const winnerName = usernames.get(wId) ?? `Player ${winnerIndex + 1}`
       setNotification({ message: `${winnerName} wins! 🎉`, color })
     }
 
@@ -422,6 +434,23 @@ export default function NertzRoute() {
       </button>
 
       {showRules && <RulesOverlay onClose={() => setShowRules(false)} />}
+
+      {gamePhase === "finished" && Object.keys(scores).length > 0 && (
+        <ScoreScreen
+          scores={scores}
+          players={players}
+          usernames={usernames}
+          winnerId={winnerId ?? ""}
+          elapsed={elapsed}
+          onPlayAgain={() => {
+            setScene({ type: "lobby" })
+            setGamePhase("waiting")
+            setStartedAt(null)
+            setScores({})
+            setWinnerId(null)
+          }}
+        />
+      )}
 
       <div ref={containerRef} className="absolute inset-0" />
     </div>

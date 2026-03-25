@@ -19,6 +19,7 @@ const makeState = (): NertzGameState => ({
   phase: "playing",
   winnerId: null,
   startedAt: null,
+  foundationContributions: { p0: 0 },
 })
 
 describe("nertz socket module", () => {
@@ -54,6 +55,28 @@ describe("nertz socket module", () => {
     expect(out.nextState).toEqual({
       cardPositions: { p0_Card_2_hearts: { x: 1, z: 2 } },
     })
+  })
+
+  it("handleCallNertz includes per-player scores in game-over payload", () => {
+    const state = makeState()
+    // p0 nertz pile is empty so they can call nertz
+    state.players[0].nertzPile = []
+    state.foundationContributions = { p0: 7 }
+
+    const out = nertzSocketModule.handleCallNertz!({
+      playerId: "p0",
+      roomCode: "ABC123",
+      gameState: state as unknown as Record<string, unknown>,
+    })
+
+    expect(out.emits).toHaveLength(1)
+    expect(out.emits[0].event).toBe("game-over")
+    const payload = out.emits[0].payload as {
+      winnerId: string
+      scores: Record<string, { foundationCards: number; nertzRemaining: number; total: number }>
+    }
+    expect(payload.winnerId).toBe("p0")
+    expect(payload.scores["p0"]).toEqual({ foundationCards: 7, nertzRemaining: 0, total: 7 })
   })
 
   it("flips stock and broadcasts game-state-update delta", () => {

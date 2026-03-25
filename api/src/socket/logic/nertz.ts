@@ -196,6 +196,9 @@ const applyFoundationPlay = (
   foundation.topValue = identity.value
   state.cardPositions[action.cardId] = slotPosition
 
+  state.foundationContributions[playerState.playerId] =
+    (state.foundationContributions[playerState.playerId] ?? 0) + 1
+
   return {
     foundations: state.foundations,
     players: state.players,
@@ -433,6 +436,7 @@ export const createOrMergeGameState = (
       phase: "waiting",
       winnerId: null,
       startedAt: null,
+      foundationContributions: { [playerId]: 0 },
     }
   }
 
@@ -444,6 +448,10 @@ export const createOrMergeGameState = (
     existing.players.push(playerState)
   }
   existing.cardPositions = { ...existing.cardPositions, ...positions }
+  if (!(playerId in (existing.foundationContributions ?? {}))) {
+    existing.foundationContributions = existing.foundationContributions ?? {}
+    existing.foundationContributions[playerId] = 0
+  }
   return existing
 }
 

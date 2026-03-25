@@ -186,8 +186,15 @@ const handleCallNertz = (ctx: HandleCallNertzContext): GameModuleResult => {
   const result = processCallNertz(ctx.playerId, nertzState)
   if (!result.ok) return { emits: [] }
 
+  const scores: Record<string, { foundationCards: number; nertzRemaining: number; total: number }> = {}
+  for (const player of nertzState.players) {
+    const foundationCards = nertzState.foundationContributions?.[player.playerId] ?? 0
+    const nertzRemaining = player.nertzPile.length
+    scores[player.playerId] = { foundationCards, nertzRemaining, total: foundationCards - nertzRemaining }
+  }
+
   return {
-    emits: [{ target: "room", event: "game-over", payload: { winnerId: nertzState.winnerId } }],
+    emits: [{ target: "room", event: "game-over", payload: { winnerId: nertzState.winnerId, scores } }],
     nextState: nertzState as unknown as Record<string, unknown>,
   }
 }

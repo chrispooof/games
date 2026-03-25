@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from "vitest"
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest"
 import { render, screen, fireEvent } from "@testing-library/react"
 
 const { gameInstance, NertzGameMock, socketMock, triggerSocket, clearSocketHandlers } = vi.hoisted(
@@ -86,10 +86,14 @@ vi.mock("~/screens/nertz/welcome", () => ({
   ),
 }))
 
-describe("Nertz reconnect path", () => {
+describe("Nertz route", () => {
   beforeEach(() => {
     vi.clearAllMocks()
     clearSocketHandlers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
   })
 
   it("rejoins, restores room-state, rehydrates local piles, and resumes action handling", async () => {
@@ -141,5 +145,48 @@ describe("Nertz reconnect path", () => {
       ok: true,
       cardId: "p0_Card_A_hearts",
     })
+  })
+
+  it("timer stops ticking after game-over fires", async () => {
+    vi.useFakeTimers()
+    const { default: NertzRoute } = await import("./nertz")
+    render(<NertzRoute />)
+    fireEvent.click(screen.getByRole("button", { name: "Host" }))
+
+    // Start the game so the timer begins
+    triggerSocket("game-started", { startedAt: new Date(Date.now()).toISOString() })
+
+    // Advance 3 seconds — timer should tick
+    vi.advanceTimersByTime(3000)
+
+    // Trigger game over
+    triggerSocket("game-over", {
+      winnerId: "local-1",
+      scores: { "local-1": { foundationCards: 5, nertzRemaining: 0, total: 5 } },
+    })
+
+    // Capture elapsed after game-over
+    const elapsedAfterOver = screen.queryByText(/^\d+:\d{2}$/)?.textContent
+
+    // Advance more time — timer should NOT change
+    vi.advanceTimersByTime(5000)
+    const elapsedLater = screen.queryByText(/^\d+:\d{2}$/)?.textContent
+
+    expect(elapsedAfterOver).toBe(elapsedLater)
+  })
+
+  it("score screen renders after game-over with scores", async () => {
+    const { default: NertzRoute } = await import("./nertz")
+    render(<NertzRoute />)
+    fireEvent.click(screen.getByRole("button", { name: "Host" }))
+
+    triggerSocket("game-started", { startedAt: new Date().toISOString() })
+    triggerSocket("game-over", {
+      winnerId: "local-1",
+      scores: { "local-1": { foundationCards: 8, nertzRemaining: 0, total: 8 } },
+    })
+
+    expect(screen.getByText("Game Over")).toBeDefined()
+    expect(screen.getByRole("button", { name: "Play Again" })).toBeDefined()
   })
 })

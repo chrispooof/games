@@ -39,6 +39,7 @@ const makeState = (players: PlayerPileState[], numPlayers = 2): NertzGameState =
   phase: "playing",
   winnerId: null,
   startedAt: null,
+  foundationContributions: Object.fromEntries(players.map((p) => [p.playerId, 0])),
 })
 
 test("createOrMergeGameState creates a new state with foundations", () => {
@@ -220,6 +221,54 @@ test("processAction applies valid work pile play onto top", () => {
   expect(out.result.ok).toBe(true)
   expect(p0.workPiles[1]).toEqual(["p0_Card_7_hearts", "p0_Card_6_clubs"])
   expect(p0.waste).toEqual([])
+})
+
+test("createOrMergeGameState initializes foundationContributions to 0 for all players", () => {
+  const pileData: InitialPileData = {
+    nertzPile: [],
+    workPiles: [[], [], [], []],
+    stock: [],
+    waste: [],
+  }
+  const state = createOrMergeGameState("p0", 0, 2, {}, pileData, null)
+  expect(state.foundationContributions).toBeDefined()
+  expect(state.foundationContributions["p0"]).toBe(0)
+
+  const merged = createOrMergeGameState("p1", 1, 2, {}, makePileData(), state)
+  expect(merged.foundationContributions["p0"]).toBe(0)
+  expect(merged.foundationContributions["p1"]).toBe(0)
+})
+
+test("applyFoundationPlay increments the acting player's foundationContributions", () => {
+  const p0 = makePlayer("p0", 0)
+  p0.nertzPile = ["p0_Card_A_hearts"]
+  const state = makeState([p0], 2)
+  const action = {
+    type: "play-to-foundation" as const,
+    cardId: "p0_Card_A_hearts",
+    slotIndex: 0,
+    source: "nertz" as const,
+  }
+
+  const out = processAction(action, "p0", state, { x: 1, z: 1 })
+  expect(out.result.ok).toBe(true)
+  expect(state.foundationContributions["p0"]).toBe(1)
+})
+
+test("applyFoundationPlay does not change other players' foundationContributions", () => {
+  const p0 = makePlayer("p0", 0)
+  const p1 = makePlayer("p1", 1)
+  p0.nertzPile = ["p0_Card_A_hearts"]
+  const state = makeState([p0, p1], 2)
+  const action = {
+    type: "play-to-foundation" as const,
+    cardId: "p0_Card_A_hearts",
+    slotIndex: 0,
+    source: "nertz" as const,
+  }
+
+  processAction(action, "p0", state, { x: 1, z: 1 })
+  expect(state.foundationContributions["p1"]).toBe(0)
 })
 
 test("processAction rejects merge-work-piles when source equals target", () => {

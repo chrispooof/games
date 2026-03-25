@@ -34,6 +34,8 @@ export interface NertzGameState {
   winnerId: string | null
   /** ISO timestamp set when the host starts the game */
   startedAt: string | null
+  /** Number of foundation cards played by each player, keyed by playerId */
+  foundationContributions: Record<string, number>
 }
 
 /** Pile data sent by the client after the deal animation completes. */
