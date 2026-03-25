@@ -65,7 +65,6 @@ describe("nertz socket module", () => {
 
     const out = nertzSocketModule.handleCallNertz!({
       playerId: "p0",
-      roomCode: "ABC123",
       gameState: state as unknown as Record<string, unknown>,
     })
 
