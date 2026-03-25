@@ -60,6 +60,19 @@ export interface HandleSetStateContext {
   gameState: Record<string, unknown> | null
 }
 
+/** Context for start-game dispatch into a game module. */
+export interface HandleStartGameContext {
+  playerId: string
+  players: GamePlayer[]
+  gameState: Record<string, unknown> | null
+}
+
+/** Context for call-nertz dispatch into a game module. */
+export interface HandleCallNertzContext {
+  playerId: string
+  gameState: Record<string, unknown> | null
+}
+
 /** Module execution result: emitted events and optional persisted state. */
 export interface GameModuleResult {
   emits: SocketEmitMessage[]
@@ -74,4 +87,6 @@ export interface SocketGameModule {
   buildRoomStateExtras?: (ctx: BuildRoomStateExtrasContext) => Record<string, unknown>
   handleGameAction: (ctx: HandleGameActionContext) => GameModuleResult
   handleSetState?: (ctx: HandleSetStateContext) => GameModuleResult
+  handleStartGame?: (ctx: HandleStartGameContext) => GameModuleResult
+  handleCallNertz?: (ctx: HandleCallNertzContext) => GameModuleResult
 }

@@ -374,12 +374,7 @@ export const processAction = (
       return { result: { ok: false, cardId: action.cardId, reason: error }, isGameOver: false }
     }
     const delta = applyFoundationPlay(action, playerState, state, resolvedPosition)
-    const isGameOver = playerState.nertzPile.length === 0
-    if (isGameOver) {
-      state.phase = "finished"
-      state.winnerId = playerId
-    }
-    return { result: { ok: true, cardId: action.cardId }, gameStateUpdate: delta, isGameOver }
+    return { result: { ok: true, cardId: action.cardId }, gameStateUpdate: delta, isGameOver: false }
   }
 
   if (action.type === "play-to-work-pile") {
@@ -435,8 +430,9 @@ export const createOrMergeGameState = (
       cardPositions: positions,
       foundations,
       players: [playerState],
-      phase: "playing",
+      phase: "waiting",
       winnerId: null,
+      startedAt: null,
     }
   }
 
@@ -525,4 +521,38 @@ export const processFlipStock = (
     result: { ok: true, cardId: topWasteCardId },
     gameStateUpdate: { players: state.players, cardPositions: cardPositionsDelta },
   }
+}
+
+/**
+ * Transitions the game from `waiting` to `playing` for the host.
+ * Returns an error if the sender is not the host or the phase is wrong.
+ */
+export const processStartGame = (
+  playerId: string,
+  hostPlayerId: string,
+  state: NertzGameState,
+): { ok: true; startedAt: string } | { ok: false; reason: string } => {
+  if (playerId !== hostPlayerId) return { ok: false, reason: "Only the host can start the game" }
+  if (state.phase !== "waiting") return { ok: false, reason: "Game is not in the waiting phase" }
+  const startedAt = new Date().toISOString()
+  state.phase = "playing"
+  state.startedAt = startedAt
+  return { ok: true, startedAt }
+}
+
+/**
+ * Ends the game when a player declares their nertz pile is empty.
+ * Validates the pile is actually empty before accepting the claim.
+ */
+export const processCallNertz = (
+  playerId: string,
+  state: NertzGameState,
+): { ok: true } | { ok: false; reason: string } => {
+  if (state.phase !== "playing") return { ok: false, reason: "Game is not in progress" }
+  const playerState = state.players.find((p) => p.playerId === playerId)
+  if (!playerState) return { ok: false, reason: "Player not found in game state" }
+  if (playerState.nertzPile.length > 0) return { ok: false, reason: "Your nertz pile is not empty" }
+  state.phase = "finished"
+  state.winnerId = playerId
+  return { ok: true }
 }

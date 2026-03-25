@@ -18,6 +18,7 @@ const makeState = (): NertzGameState => ({
   ],
   phase: "playing",
   winnerId: null,
+  startedAt: null,
 })
 
 describe("nertz socket module", () => {
@@ -31,6 +32,8 @@ describe("nertz socket module", () => {
     expect(extras).toEqual({
       nertzCounts: { p0: 1 },
       nertzTops: { p0: "p0_Card_A_hearts" },
+      phase: "playing",
+      startedAt: null,
     })
   })
 

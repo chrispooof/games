@@ -3,12 +3,16 @@ import {
   getFoundationSlotPosition,
   processAction,
   processFlipStock,
+  processStartGame,
+  processCallNertz,
 } from "../logic/nertz"
 import type {
   BuildRoomStateExtrasContext,
   GameModuleResult,
   HandleGameActionContext,
   HandleSetStateContext,
+  HandleStartGameContext,
+  HandleCallNertzContext,
   SocketGameModule,
 } from "../../types/socket"
 import { nertzGameActionSchema, nertzSetStateSchema } from "../../types/nertz"
@@ -42,7 +46,12 @@ const asNertzState = (state: Record<string, unknown> | null): NertzGameState | n
 /** Builds Nertz-specific additions to the base `room-state` payload. */
 const buildRoomStateExtras = (ctx: BuildRoomStateExtrasContext): Record<string, unknown> => {
   const nertzState = asNertzState(ctx.gameState)
-  return nertzState ? buildNertzInfo(nertzState.players) : {}
+  if (!nertzState) return {}
+  return {
+    ...buildNertzInfo(nertzState.players),
+    phase: nertzState.phase,
+    startedAt: nertzState.startedAt ?? null,
+  }
 }
 
 /** Routes validated game actions into Nertz domain logic and event envelopes. */
@@ -111,13 +120,6 @@ const handleGameAction = (ctx: HandleGameActionContext): GameModuleResult => {
         ...buildNertzInfo(nertzState.players),
       },
     })
-    if (isGameOver) {
-      emits.push({
-        target: "room",
-        event: "game-over",
-        payload: { winnerId: nertzState.winnerId },
-      })
-    }
     return { emits, nextState: nertzState as unknown as Record<string, unknown> }
   }
 
@@ -158,6 +160,38 @@ const handleSetState = (ctx: HandleSetStateContext): GameModuleResult => {
   }
 }
 
+/** Transitions the game from waiting to playing when the host sends start-game. */
+const handleStartGame = (ctx: HandleStartGameContext): GameModuleResult => {
+  const nertzState = asNertzState(ctx.gameState)
+  if (!nertzState) return { emits: [] }
+
+  const sortedPlayers = [...ctx.players].sort(
+    (a, b) => new Date(a.joinedAt).getTime() - new Date(b.joinedAt).getTime(),
+  )
+  const hostPlayerId = sortedPlayers[0]?.playerId ?? ""
+  const result = processStartGame(ctx.playerId, hostPlayerId, nertzState)
+  if (!result.ok) return { emits: [] }
+
+  return {
+    emits: [{ target: "room", event: "game-started", payload: { startedAt: result.startedAt } }],
+    nextState: nertzState as unknown as Record<string, unknown>,
+  }
+}
+
+/** Ends the game when a player declares their nertz pile empty (call-nertz). */
+const handleCallNertz = (ctx: HandleCallNertzContext): GameModuleResult => {
+  const nertzState = asNertzState(ctx.gameState)
+  if (!nertzState) return { emits: [] }
+
+  const result = processCallNertz(ctx.playerId, nertzState)
+  if (!result.ok) return { emits: [] }
+
+  return {
+    emits: [{ target: "room", event: "game-over", payload: { winnerId: nertzState.winnerId } }],
+    nextState: nertzState as unknown as Record<string, unknown>,
+  }
+}
+
 export const nertzSocketModule: SocketGameModule = {
   gameType: "nertz",
   gameActionSchema: nertzGameActionSchema,
@@ -165,4 +199,6 @@ export const nertzSocketModule: SocketGameModule = {
   buildRoomStateExtras,
   handleGameAction,
   handleSetState,
+  handleStartGame,
+  handleCallNertz,
 }

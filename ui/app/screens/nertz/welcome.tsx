@@ -16,6 +16,8 @@ interface GameState {
   cardPositions?: Record<string, { x: number; z: number }>
   nertzCounts?: Record<string, number>
   nertzTops?: Record<string, string | null>
+  phase?: "waiting" | "dealing" | "playing" | "finished"
+  startedAt?: string | null
 }
 
 interface NertzWelcomeProps {
@@ -61,14 +63,20 @@ const NertzWelcome = ({ onHost, onJoin }: NertzWelcomeProps) => {
           maxPlayers,
           nertzCounts,
           nertzTops,
+          phase,
+          startedAt,
         }: {
           players: PlayerRef[]
           gameState: GameState | null
           maxPlayers: number
           nertzCounts?: Record<string, number>
           nertzTops?: Record<string, string | null>
+          phase?: GameState["phase"]
+          startedAt?: string | null
         }) => {
-          const state = gameState ? { ...gameState, nertzCounts, nertzTops } : null
+          const state = gameState
+            ? { ...gameState, nertzCounts, nertzTops, phase, startedAt }
+            : null
           onHost(playerCount, data.roomCode, players, state, maxPlayers)
         }
       )

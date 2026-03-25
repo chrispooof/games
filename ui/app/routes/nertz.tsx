@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState, useCallback } from "react"
 import type { Route } from "./+types/nertz"
 import { NertzGame } from "~/games"
 import { PLAYER_BACK_COLORS } from "~/games/nertz/src/world/player-deck"
@@ -23,6 +23,8 @@ interface GameState {
   foundations?: Array<{ suit: string | null; topValue: number }>
   nertzCounts?: Record<string, number>
   nertzTops?: Record<string, string | null>
+  phase?: "waiting" | "dealing" | "playing" | "finished"
+  startedAt?: string | null
   players?: Array<{
     playerId: string
     nertzPile: string[]
@@ -54,6 +56,10 @@ export default function NertzRoute() {
   const [usernames, setUsernames] = useState<Map<string, string>>(new Map())
   const [disconnected, setDisconnected] = useState<Set<string>>(new Set())
   const [notification, setNotification] = useState<Notification | null>(null)
+  const [gamePhase, setGamePhase] = useState<"waiting" | "playing" | "finished">("waiting")
+  const [startedAt, setStartedAt] = useState<number | null>(null)
+  const [elapsed, setElapsed] = useState("0:00")
+  const [nertzEmpty, setNertzEmpty] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
   const gameRef = useRef<NertzGame | null>(null)
 
@@ -73,6 +79,23 @@ export default function NertzRoute() {
       waste: [...playerState.waste],
     }
   }
+
+  /** Formats milliseconds elapsed into M:SS */
+  const formatElapsed = useCallback((ms: number): string => {
+    const totalSec = Math.floor(ms / 1000)
+    const m = Math.floor(totalSec / 60)
+    const s = totalSec % 60
+    return `${m}:${s.toString().padStart(2, "0")}`
+  }, [])
+
+  /** Ticks the elapsed timer once per second while the game is playing */
+  useEffect(() => {
+    if (!startedAt || gamePhase === "waiting") return
+    const tick = () => setElapsed(formatElapsed(Date.now() - startedAt))
+    tick()
+    const id = setInterval(tick, 1000)
+    return () => clearInterval(id)
+  }, [startedAt, gamePhase, formatElapsed])
 
   /** Create and destroy the game instance whenever the scene changes */
   useEffect(() => {
@@ -102,6 +125,12 @@ export default function NertzRoute() {
     if (scene.gameState?.nertzCounts) {
       game.updateOpponentCounts(scene.gameState.nertzCounts, scene.gameState.nertzTops)
     }
+    // Apply phase from server state (reconnect mid-game or game already started)
+    const initialPhase = scene.gameState?.phase
+    if (initialPhase === "playing" || initialPhase === "finished") {
+      game.setGamePhase(initialPhase)
+    }
+    game.setNertzCountCallback((count) => setNertzEmpty(count === 0))
     gameRef.current = game
 
     return () => {
@@ -216,7 +245,16 @@ export default function NertzRoute() {
       if (nertzCounts) gameRef.current?.updateOpponentCounts(nertzCounts, nertzTops)
     }
 
+    const onGameStarted = ({ startedAt: iso }: { startedAt: string }) => {
+      const ts = new Date(iso).getTime()
+      setStartedAt(ts)
+      setGamePhase("playing")
+      gameRef.current?.setGamePhase("playing")
+    }
+
     const onGameOver = ({ winnerId }: { winnerId: string }) => {
+      setGamePhase("finished")
+      gameRef.current?.setGamePhase("finished")
       const winnerIndex = players.findIndex((id) => id === winnerId)
       const color =
         winnerIndex >= 0
@@ -235,6 +273,7 @@ export default function NertzRoute() {
     socket.on("action-result", onActionResult)
     socket.on("room-state", onRoomState)
     socket.on("game-state-update", onGameStateUpdate)
+    socket.on("game-started", onGameStarted)
     socket.on("game-over", onGameOver)
 
     return () => {
@@ -247,6 +286,7 @@ export default function NertzRoute() {
       socket.off("action-result", onActionResult)
       socket.off("room-state", onRoomState)
       socket.off("game-state-update", onGameStateUpdate)
+      socket.off("game-started", onGameStarted)
       socket.off("game-over", onGameOver)
     }
   }, [scene])
@@ -254,11 +294,19 @@ export default function NertzRoute() {
   if (scene.type === "lobby") {
     return (
       <NertzWelcome
-        onHost={(playerCount, roomCode, initialPlayers, gameState, maxPlayers) => {
+        onHost={(_playerCount, roomCode, initialPlayers, gameState, maxPlayers) => {
           setPlayers(initialPlayers.map((p) => p.playerId))
           setUsernames(
             new Map(initialPlayers.filter((p) => p.username).map((p) => [p.playerId, p.username!]))
           )
+          const phase = gameState?.phase
+          if (phase === "playing" || phase === "finished") {
+            setGamePhase(phase)
+            if (gameState?.startedAt) setStartedAt(new Date(gameState.startedAt).getTime())
+          } else {
+            setGamePhase("waiting")
+            setStartedAt(null)
+          }
           setScene({ type: "game", roomCode, maxPlayers, isHost: true, initialPlayers, gameState })
         }}
         onJoin={(roomCode, initialPlayers, gameState, maxPlayers) => {
@@ -266,6 +314,14 @@ export default function NertzRoute() {
           setUsernames(
             new Map(initialPlayers.filter((p) => p.username).map((p) => [p.playerId, p.username!]))
           )
+          const phase = gameState?.phase
+          if (phase === "playing" || phase === "finished") {
+            setGamePhase(phase)
+            if (gameState?.startedAt) setStartedAt(new Date(gameState.startedAt).getTime())
+          } else {
+            setGamePhase("waiting")
+            setStartedAt(null)
+          }
           setScene({
             type: "game",
             roomCode,
@@ -308,17 +364,52 @@ export default function NertzRoute() {
         ))}
       </div>
 
-      <div className="absolute top-3 right-3 z-10 bg-black/60 backdrop-blur-sm rounded-lg px-4 py-2 border border-white/10 select-none">
+      {/* Top-right: room code + timer */}
+      <div className="absolute top-3 right-3 z-10 bg-black/60 backdrop-blur-sm rounded-lg px-4 py-2 border border-white/10 select-none text-right">
         <p className="text-white/50 text-xs uppercase tracking-widest font-medium">Room Code</p>
         <p className="text-white text-2xl font-black tracking-widest">{scene.roomCode}</p>
+        {gamePhase !== "waiting" && (
+          <p className="text-white/60 text-sm font-mono mt-0.5">{elapsed}</p>
+        )}
       </div>
-      {/* Flip Stock button — click to flip 3 cards from stock to waste */}
-      <button
-        className="absolute bottom-4 right-4 z-10 px-5 py-2 rounded-lg bg-black/70 backdrop-blur-sm border border-white/10 text-white text-sm font-semibold select-none hover:bg-white/10 active:scale-95 transition-all"
-        onClick={() => gameRef.current?.flipStock()}
-      >
-        Flip Stock
-      </button>
+
+      {/* Host "Start Game" button — only visible in waiting phase */}
+      {scene.isHost && gamePhase === "waiting" && (
+        <div className="absolute inset-0 z-10 flex items-center justify-center pointer-events-none">
+          <button
+            className="pointer-events-auto px-8 py-4 rounded-xl bg-amber-500 hover:bg-amber-400 active:scale-95 text-black text-xl font-black shadow-2xl transition-all select-none"
+            onClick={() => socket.emit("start-game")}
+          >
+            Start Game
+          </button>
+        </div>
+      )}
+
+      {/* "Waiting for host" message for non-host players */}
+      {!scene.isHost && gamePhase === "waiting" && (
+        <div className="absolute bottom-16 left-1/2 -translate-x-1/2 z-10 px-4 py-2 rounded-lg bg-black/60 backdrop-blur-sm border border-white/10 text-white/60 text-sm select-none pointer-events-none">
+          Waiting for host to start…
+        </div>
+      )}
+
+      {/* Bottom row: Flip Stock + Nertz! */}
+      <div className="absolute bottom-4 right-4 z-10 flex gap-2">
+        {gamePhase === "playing" && nertzEmpty && (
+          <button
+            className="px-5 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 active:scale-95 text-black text-sm font-black shadow-lg select-none transition-all"
+            onClick={() => gameRef.current?.callNertz()}
+          >
+            Nertz!
+          </button>
+        )}
+        <button
+          className="px-5 py-2 rounded-lg bg-black/70 backdrop-blur-sm border border-white/10 text-white text-sm font-semibold select-none hover:bg-white/10 active:scale-95 transition-all disabled:opacity-30 disabled:pointer-events-none"
+          disabled={gamePhase !== "playing"}
+          onClick={() => gameRef.current?.flipStock()}
+        >
+          Flip Stock
+        </button>
+      </div>
 
       <div ref={containerRef} className="absolute inset-0" />
     </div>

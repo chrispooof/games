@@ -3,7 +3,9 @@ import {
   createOrMergeGameState,
   getFoundationSlotPosition,
   processAction,
+  processCallNertz,
   processFlipStock,
+  processStartGame,
   type InitialPileData,
   type NertzGameState,
   type PlayerPileState,
@@ -36,6 +38,7 @@ const makeState = (players: PlayerPileState[], numPlayers = 2): NertzGameState =
   players,
   phase: "playing",
   winnerId: null,
+  startedAt: null,
 })
 
 test("createOrMergeGameState creates a new state with foundations", () => {
@@ -52,7 +55,7 @@ test("createOrMergeGameState creates a new state with foundations", () => {
   expect(state.foundations).toHaveLength(16)
   expect(state.players).toHaveLength(1)
   expect(state.players[0].playerId).toBe("p0")
-  expect(state.phase).toBe("playing")
+  expect(state.phase).toBe("waiting")
   expect(state.cardPositions).toEqual(positions)
 })
 
@@ -119,7 +122,7 @@ test("processFlipStock recycles waste into stock when stock is empty", () => {
   expect(p0.waste).toEqual([])
 })
 
-test("processAction applies valid foundation play and ends game when nertz empties", () => {
+test("processAction applies valid foundation play — nertz pile empty does not auto-end game", () => {
   const p0 = makePlayer("p0", 0)
   p0.nertzPile = ["p0_Card_A_hearts"]
   const state = makeState([p0], 2)
@@ -132,12 +135,54 @@ test("processAction applies valid foundation play and ends game when nertz empti
 
   const out = processAction(action, "p0", state, { x: 1, z: 1 })
   expect(out.result.ok).toBe(true)
-  expect(out.isGameOver).toBe(true)
-  expect(state.phase).toBe("finished")
-  expect(state.winnerId).toBe("p0")
+  expect(out.isGameOver).toBe(false)
+  expect(state.phase).toBe("playing") // game keeps running until player calls nertz
+  expect(state.winnerId).toBeNull()
   expect(state.foundations[0].suit).toBe("hearts")
   expect(state.foundations[0].topValue).toBe(1)
   expect(p0.nertzPile.length).toBe(0)
+})
+
+test("processCallNertz ends the game when nertz pile is empty", () => {
+  const p0 = makePlayer("p0", 0)
+  p0.nertzPile = []
+  const state = makeState([p0], 2)
+
+  const result = processCallNertz("p0", state)
+  expect(result.ok).toBe(true)
+  expect(state.phase).toBe("finished")
+  expect(state.winnerId).toBe("p0")
+})
+
+test("processCallNertz rejects when nertz pile is not empty", () => {
+  const p0 = makePlayer("p0", 0)
+  p0.nertzPile = ["p0_Card_A_hearts"]
+  const state = makeState([p0], 2)
+
+  const result = processCallNertz("p0", state)
+  expect(result.ok).toBe(false)
+  expect(state.phase).toBe("playing")
+})
+
+test("processStartGame transitions waiting → playing and records startedAt", () => {
+  const p0 = makePlayer("p0", 0)
+  const state = makeState([p0], 2)
+  state.phase = "waiting"
+
+  const result = processStartGame("p0", "p0", state)
+  expect(result.ok).toBe(true)
+  if (result.ok) expect(result.startedAt).toBeTruthy()
+  expect(state.phase).toBe("playing")
+})
+
+test("processStartGame rejects non-host callers", () => {
+  const p0 = makePlayer("p0", 0)
+  const state = makeState([p0], 2)
+  state.phase = "waiting"
+
+  const result = processStartGame("p1", "p0", state)
+  expect(result.ok).toBe(false)
+  expect(state.phase).toBe("waiting")
 })
 
 test("processAction rejects foundation conflict when suit mismatches", () => {

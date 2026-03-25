@@ -29,8 +29,11 @@ export interface NertzGameState {
   cardPositions: Record<string, { x: number; z: number }>
   foundations: FoundationState[]
   players: PlayerPileState[]
-  phase: "dealing" | "playing" | "finished"
+  /** waiting = lobby, playing = in progress, finished = game over */
+  phase: "waiting" | "dealing" | "playing" | "finished"
   winnerId: string | null
+  /** ISO timestamp set when the host starts the game */
+  startedAt: string | null
 }
 
 /** Pile data sent by the client after the deal animation completes. */

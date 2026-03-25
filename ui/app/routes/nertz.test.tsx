@@ -12,6 +12,9 @@ const { gameInstance, NertzGameMock, socketMock, triggerSocket, clearSocketHandl
       applyState: vi.fn(),
       applyLocalPileState: vi.fn(),
       flipStock: vi.fn(),
+      setNertzCountCallback: vi.fn(),
+      setGamePhase: vi.fn(),
+      callNertz: vi.fn(),
       destroy: vi.fn(),
     }
 

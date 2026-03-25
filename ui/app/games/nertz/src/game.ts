@@ -126,6 +126,10 @@ export class NertzGame {
   private initialCardPositions: Record<string, { x: number; z: number }> | null
   /** In-flight typed action awaiting an `action-result` response */
   private pendingAction: GameAction | null = null
+  /** Whether the host has started the game — blocks all moves until true */
+  private gamePhase: "waiting" | "playing" | "finished" = "waiting"
+  /** Callback fired when the local nertz pile count changes */
+  private onNertzCountChange: ((count: number) => void) | null = null
 
   /** Radial direction components from center toward local player's seat */
   private radialX = 0
@@ -309,6 +313,7 @@ export class NertzGame {
     const count = this.localPileState.nertzPile.length
     this.nertzCountEl.textContent = `${count}`
     this.nertzCountEl.style.display = count > 0 ? "" : "none"
+    this.onNertzCountChange?.(count)
 
     const nertzBase = this.localPilePositions[0]
     const pos = new THREE.Vector3(nertzBase.x, 0.5, nertzBase.z)
@@ -876,12 +881,42 @@ export class NertzGame {
    * Called by the Flip Stock button in the UI.
    */
   flipStock(): void {
-    if (!this.localPileState) return
+    if (!this.localPileState || this.gamePhase !== "playing") return
     this.lastActionTime = performance.now()
     if (this.hintsActive) this.clearPlayableHighlights()
     const action: GameAction = { type: "flip-stock" }
     this.pendingAction = action
     socket.emit("game-action", action)
+  }
+
+  /**
+   * Transitions the game phase, enabling or disabling card interactions.
+   * Call with `"playing"` when the host starts the game, `"finished"` on game-over.
+   */
+  setGamePhase(phase: "waiting" | "playing" | "finished"): void {
+    this.gamePhase = phase
+    // Re-run draggable registration so cards become interactive (or locked) immediately
+    if (this.localPileState && this.localPilePositions) {
+      this.updateDraggableCards()
+      this.registerWorkPilesWithDragControls()
+    }
+  }
+
+  /**
+   * Registers a callback that fires whenever the local nertz pile count changes.
+   * Used by the route component to show/hide the "Nertz!" button.
+   */
+  setNertzCountCallback(cb: (count: number) => void): void {
+    this.onNertzCountChange = cb
+  }
+
+  /**
+   * Emits `call-nertz` to the server to end the game.
+   * The server validates the nertz pile is actually empty before accepting.
+   */
+  callNertz(): void {
+    if (this.gamePhase !== "playing") return
+    socket.emit("call-nertz")
   }
 
   // ---------------------------------------------------------------------------
@@ -956,6 +991,10 @@ export class NertzGame {
     foundationSlotIndex: number | null,
     workPileIndex: number | null
   ): void {
+    if (this.gamePhase !== "playing") {
+      this.dragControls.snapBackCard(cardId)
+      return
+    }
     const source = this.findCardSource(cardId)
 
     if (foundationSlotIndex !== null) {
@@ -1071,6 +1110,11 @@ export class NertzGame {
    */
   private updateDraggableCards(): void {
     if (!this.localPileState || !this.localDeck) return
+    // No interactions until the host starts the game or after it ends
+    if (this.gamePhase !== "playing") {
+      this.dragControls.setCards([])
+      return
+    }
     const { nertzPile, workPiles, waste } = this.localPileState
     const draggable: Card[] = []
 

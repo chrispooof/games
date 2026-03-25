@@ -314,6 +314,55 @@ export const registerSocketHandlers = (io: Server): void => {
     })
 
     /**
+     * Host starts the game — transitions from waiting to playing and broadcasts game-started.
+     */
+    socket.on("start-game", async () => {
+      const entry = socketToPlayer.get(socket.id)
+      if (!entry) return
+      const { roomCode, playerId } = entry
+
+      const [game, current, players] = await Promise.all([
+        getGame(roomCode),
+        getGameState(roomCode),
+        getPlayers(roomCode),
+      ])
+      if (!game) return
+
+      const gameModule = resolveGameModule(game.gameType)
+      if (!gameModule?.handleStartGame) return
+
+      const out = gameModule.handleStartGame({
+        playerId,
+        players,
+        gameState: (current?.state as Record<string, unknown> | undefined) ?? null,
+      })
+      if (out.nextState) await updateGameState(roomCode, game.gameType, out.nextState)
+      emitMessages(io, socket, roomCode, out.emits)
+    })
+
+    /**
+     * Player declares their nertz pile is empty — ends the game if valid.
+     */
+    socket.on("call-nertz", async () => {
+      const entry = socketToPlayer.get(socket.id)
+      if (!entry) return
+      const { roomCode, playerId } = entry
+
+      const [game, current] = await Promise.all([getGame(roomCode), getGameState(roomCode)])
+      if (!game) return
+
+      const gameModule = resolveGameModule(game.gameType)
+      if (!gameModule?.handleCallNertz) return
+
+      const out = gameModule.handleCallNertz({
+        playerId,
+        gameState: (current?.state as Record<string, unknown> | undefined) ?? null,
+      })
+      if (out.nextState) await updateGameState(roomCode, game.gameType, out.nextState)
+      emitMessages(io, socket, roomCode, out.emits)
+    })
+
+    /**
      * Socket disconnected (network drop, tab close, etc.).
      * Notifies the room and starts a 30s grace period before permanently removing the player.
      */
