@@ -5,7 +5,11 @@ import type { NertzGameState } from "../logic/nertz"
 const makeState = (): NertzGameState => ({
   numPlayers: 2,
   cardPositions: {},
-  foundations: Array.from({ length: 8 }, (_, i) => ({ slotIndex: i, suit: null, topValue: 0 })),
+  foundations: Array.from({ length: 8 }, (_, i) => ({
+    slotIndex: i,
+    suit: null,
+    topValue: 0,
+  })),
   players: [
     {
       playerId: "p0",
@@ -29,7 +33,9 @@ describe("nertz socket module", () => {
   })
 
   it("adds nertz counts/tops to room-state extras", () => {
-    const extras = nertzSocketModule.buildRoomStateExtras?.({ gameState: makeState() as unknown as Record<string, unknown> })
+    const extras = nertzSocketModule.buildRoomStateExtras?.({
+      gameState: makeState() as unknown as Record<string, unknown>,
+    })
     expect(extras).toEqual({
       nertzCounts: { p0: 1 },
       nertzTops: { p0: "p0_Card_A_hearts" },
@@ -40,7 +46,11 @@ describe("nertz socket module", () => {
 
   it("handles legacy move-card by updating state and broadcasting game-action", () => {
     const out = nertzSocketModule.handleGameAction({
-      action: { type: "move-card", cardId: "p0_Card_2_hearts", position: { x: 1, z: 2 } },
+      action: {
+        type: "move-card",
+        cardId: "p0_Card_2_hearts",
+        position: { x: 1, z: 2 },
+      },
       playerId: "p0",
       roomCode: "ABC123",
       gameState: {},
@@ -49,7 +59,11 @@ describe("nertz socket module", () => {
       {
         target: "others",
         event: "game-action",
-        payload: { type: "move-card", cardId: "p0_Card_2_hearts", position: { x: 1, z: 2 } },
+        payload: {
+          type: "move-card",
+          cardId: "p0_Card_2_hearts",
+          position: { x: 1, z: 2 },
+        },
       },
     ])
     expect(out.nextState).toEqual({
@@ -75,7 +89,11 @@ describe("nertz socket module", () => {
       scores: Record<string, { foundationCards: number; nertzRemaining: number; total: number }>
     }
     expect(payload.winnerId).toBe("p0")
-    expect(payload.scores["p0"]).toEqual({ foundationCards: 7, nertzRemaining: 0, total: 7 })
+    expect(payload.scores["p0"]).toEqual({
+      foundationCards: 7,
+      nertzRemaining: 0,
+      total: 7,
+    })
   })
 
   it("flips stock and broadcasts game-state-update delta", () => {

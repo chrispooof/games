@@ -74,7 +74,11 @@ export type GameAction =
 /** Response emitted to the acting socket for typed actions. */
 export type ActionResult =
   | { ok: true; cardId: string }
-  | { ok: false; cardId: string; reason: "illegal-move" | "foundation-conflict" | "not-your-pile" }
+  | {
+      ok: false
+      cardId: string
+      reason: "illegal-move" | "foundation-conflict" | "not-your-pile"
+    }
 
 const sourceSchema = z.enum(["nertz", "work", "waste"])
 const cardPositionSchema = z.object({ x: z.number(), z: z.number() })
@@ -114,7 +118,12 @@ export const nertzSetStateSchema = z.object({
   positions: z.record(z.string(), cardPositionSchema),
   pileState: z.object({
     nertzPile: z.array(z.string()),
-    workPiles: z.tuple([z.array(z.string()), z.array(z.string()), z.array(z.string()), z.array(z.string())]),
+    workPiles: z.tuple([
+      z.array(z.string()),
+      z.array(z.string()),
+      z.array(z.string()),
+      z.array(z.string()),
+    ]),
     stock: z.array(z.string()),
     waste: z.array(z.string()),
   }),

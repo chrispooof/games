@@ -47,20 +47,27 @@ const logSocketEvent = (event: string, meta: SocketLogMeta = {}): void => {
       event,
       at: new Date().toISOString(),
       ...meta,
-    }),
+    })
   )
 }
 
 /** Tracks and logs unsupported game type occurrences per gameType. */
-const trackUnsupportedGameType = (gameType: string, meta: Omit<SocketLogMeta, "gameType">): void => {
+const trackUnsupportedGameType = (
+  gameType: string,
+  meta: Omit<SocketLogMeta, "gameType">
+): void => {
   const count = incrementCount(socketMetrics.unsupportedGameType, gameType)
-  logSocketEvent("unsupported-game-type", { ...meta, gameType, details: { count } })
+  logSocketEvent("unsupported-game-type", {
+    ...meta,
+    gameType,
+    details: { count },
+  })
 }
 
 /** Tracks and logs action rejection reasons seen in emitted action-result envelopes. */
 const trackActionRejection = (
   reason: "illegal-move" | "foundation-conflict" | "not-your-pile" | string,
-  meta: Omit<SocketLogMeta, "reason">,
+  meta: Omit<SocketLogMeta, "reason">
 ): void => {
   const count = incrementCount(socketMetrics.actionRejections, reason)
   logSocketEvent("action-rejected", { ...meta, reason, details: { count } })
@@ -74,13 +81,16 @@ const emitMessages = (
   io: Server,
   socket: Socket,
   roomCode: string,
-  messages: SocketEmitMessage[],
+  messages: SocketEmitMessage[]
 ): void => {
   for (const msg of messages) {
     if (msg.event === "action-result" && typeof msg.payload === "object" && msg.payload !== null) {
       const maybeResult = msg.payload as { ok?: boolean; reason?: string }
       if (maybeResult.ok === false && typeof maybeResult.reason === "string") {
-        trackActionRejection(maybeResult.reason, { roomCode, socketId: socket.id })
+        trackActionRejection(maybeResult.reason, {
+          roomCode,
+          socketId: socket.id,
+        })
       }
     }
 
@@ -104,7 +114,7 @@ const emitInternalSocketError = (
   socket: Socket,
   event: string,
   meta: SocketLogMeta,
-  error: unknown,
+  error: unknown
 ): void => {
   console.error(`[socket] ${event} failed`, error)
   logSocketEvent(`${event}-internal-error`, meta)
@@ -147,7 +157,11 @@ export const registerSocketHandlers = (io: Server): void => {
 
         const game = await getGame(roomCode)
         if (!game) {
-          logSocketEvent("join-room-room-not-found", { roomCode, playerId, socketId: socket.id })
+          logSocketEvent("join-room-room-not-found", {
+            roomCode,
+            playerId,
+            socketId: socket.id,
+          })
           socket.emit("error", { message: "Room not found" })
           return
         }
@@ -183,9 +197,12 @@ export const registerSocketHandlers = (io: Server): void => {
           })
         }
 
-        const [players, gameState] = await Promise.all([getPlayers(roomCode), getGameState(roomCode)])
+        const [players, gameState] = await Promise.all([
+          getPlayers(roomCode),
+          getGameState(roomCode),
+        ])
         const sortedPlayers = [...players].sort(
-          (a, b) => new Date(a.joinedAt).getTime() - new Date(b.joinedAt).getTime(),
+          (a, b) => new Date(a.joinedAt).getTime() - new Date(b.joinedAt).getTime()
         )
 
         const gameModule = resolveGameModule(game.gameType)
@@ -195,7 +212,11 @@ export const registerSocketHandlers = (io: Server): void => {
             })
           : {}
         if (!gameModule) {
-          trackUnsupportedGameType(game.gameType, { roomCode, playerId, socketId: socket.id })
+          trackUnsupportedGameType(game.gameType, {
+            roomCode,
+            playerId,
+            socketId: socket.id,
+          })
           socket.emit("error", unsupportedGameMessage(game.gameType))
         }
 
@@ -206,7 +227,12 @@ export const registerSocketHandlers = (io: Server): void => {
           ...moduleExtras,
         })
       } catch (error) {
-        emitInternalSocketError(socket, "join-room", { roomCode, playerId, socketId: socket.id }, error)
+        emitInternalSocketError(
+          socket,
+          "join-room",
+          { roomCode, playerId, socketId: socket.id },
+          error
+        )
       }
     })
 
@@ -247,14 +273,20 @@ export const registerSocketHandlers = (io: Server): void => {
 
         const gameModule = resolveGameModule(game.gameType)
         if (!gameModule) {
-          trackUnsupportedGameType(game.gameType, { roomCode, playerId, socketId: socket.id })
+          trackUnsupportedGameType(game.gameType, {
+            roomCode,
+            playerId,
+            socketId: socket.id,
+          })
           socket.emit("error", unsupportedGameMessage(game.gameType))
           return
         }
         if (gameModule.gameActionSchema) {
           const parsedAction = gameModule.gameActionSchema.safeParse(action)
           if (!parsedAction.success) {
-            socket.emit("error", { message: `Invalid game-action payload for game type: ${game.gameType}` })
+            socket.emit("error", {
+              message: `Invalid game-action payload for game type: ${game.gameType}`,
+            })
             return
           }
           action = parsedAction.data
@@ -273,7 +305,12 @@ export const registerSocketHandlers = (io: Server): void => {
 
         emitMessages(io, socket, roomCode, out.emits)
       } catch (error) {
-        emitInternalSocketError(socket, "game-action", { roomCode, playerId, socketId: socket.id }, error)
+        emitInternalSocketError(
+          socket,
+          "game-action",
+          { roomCode, playerId, socketId: socket.id },
+          error
+        )
       }
     })
 
@@ -301,18 +338,26 @@ export const registerSocketHandlers = (io: Server): void => {
 
         const gameModule = resolveGameModule(game.gameType)
         if (!gameModule) {
-          trackUnsupportedGameType(game.gameType, { roomCode, playerId, socketId: socket.id })
+          trackUnsupportedGameType(game.gameType, {
+            roomCode,
+            playerId,
+            socketId: socket.id,
+          })
           socket.emit("error", unsupportedGameMessage(game.gameType))
           return
         }
         if (!gameModule.handleSetState) {
-          socket.emit("error", { message: `set-state is not supported for game type: ${game.gameType}` })
+          socket.emit("error", {
+            message: `set-state is not supported for game type: ${game.gameType}`,
+          })
           return
         }
         if (gameModule.setStateSchema) {
           const parsedPayload = gameModule.setStateSchema.safeParse(payload)
           if (!parsedPayload.success) {
-            socket.emit("error", { message: `Invalid set-state payload for game type: ${game.gameType}` })
+            socket.emit("error", {
+              message: `Invalid set-state payload for game type: ${game.gameType}`,
+            })
             return
           }
           payload = parsedPayload.data
@@ -332,7 +377,12 @@ export const registerSocketHandlers = (io: Server): void => {
 
         emitMessages(io, socket, roomCode, out.emits)
       } catch (error) {
-        emitInternalSocketError(socket, "set-state", { roomCode, playerId, socketId: socket.id }, error)
+        emitInternalSocketError(
+          socket,
+          "set-state",
+          { roomCode, playerId, socketId: socket.id },
+          error
+        )
       }
     })
 
@@ -363,7 +413,12 @@ export const registerSocketHandlers = (io: Server): void => {
         if (out.nextState) await updateGameState(roomCode, game.gameType, out.nextState)
         emitMessages(io, socket, roomCode, out.emits)
       } catch (error) {
-        emitInternalSocketError(socket, "start-game", { roomCode, playerId, socketId: socket.id }, error)
+        emitInternalSocketError(
+          socket,
+          "start-game",
+          { roomCode, playerId, socketId: socket.id },
+          error
+        )
       }
     })
 
@@ -389,7 +444,12 @@ export const registerSocketHandlers = (io: Server): void => {
         if (out.nextState) await updateGameState(roomCode, game.gameType, out.nextState)
         emitMessages(io, socket, roomCode, out.emits)
       } catch (error) {
-        emitInternalSocketError(socket, "call-nertz", { roomCode, playerId, socketId: socket.id }, error)
+        emitInternalSocketError(
+          socket,
+          "call-nertz",
+          { roomCode, playerId, socketId: socket.id },
+          error
+        )
       }
     })
 

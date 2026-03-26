@@ -82,7 +82,7 @@ const fitsAdjacent = (a: CardIdentity, b: CardIdentity): boolean =>
 const getSourcePile = (
   playerState: PlayerPileState,
   source: "nertz" | "work" | "waste",
-  sourceIndex: number | undefined,
+  sourceIndex: number | undefined
 ): string[] | null => {
   if (source === "nertz") return playerState.nertzPile
   if (source === "waste") return playerState.waste
@@ -95,7 +95,7 @@ const getSourcePile = (
 const popFromPile = (
   playerState: PlayerPileState,
   source: "nertz" | "work" | "waste",
-  sourceIndex: number | undefined,
+  sourceIndex: number | undefined
 ): void => {
   if (source === "nertz") {
     playerState.nertzPile.pop()
@@ -117,7 +117,7 @@ const popFromPile = (
 const validateFoundationPlay = (
   action: Extract<GameAction, { type: "play-to-foundation" }>,
   playerState: PlayerPileState,
-  state: NertzGameState,
+  state: NertzGameState
 ): "illegal-move" | "foundation-conflict" | null => {
   const { cardId, slotIndex, source, sourceIndex } = action
   const identity = parseCardId(cardId)
@@ -148,7 +148,7 @@ const validateFoundationPlay = (
  */
 const validateWorkPilePlay = (
   action: Extract<GameAction, { type: "play-to-work-pile" }>,
-  playerState: PlayerPileState,
+  playerState: PlayerPileState
 ): "illegal-move" | "not-your-pile" | null => {
   const { cardId, targetPileIndex, source, sourceIndex } = action
   const identity = parseCardId(cardId)
@@ -186,7 +186,7 @@ const applyFoundationPlay = (
   action: Extract<GameAction, { type: "play-to-foundation" }>,
   playerState: PlayerPileState,
   state: NertzGameState,
-  slotPosition: { x: number; z: number },
+  slotPosition: { x: number; z: number }
 ): Partial<NertzGameState> => {
   const identity = parseCardId(action.cardId)!
   popFromPile(playerState, action.source, action.sourceIndex)
@@ -209,7 +209,7 @@ const applyFoundationPlay = (
 const applyWorkPilePlay = (
   action: Extract<GameAction, { type: "play-to-work-pile" }>,
   playerState: PlayerPileState,
-  state: NertzGameState,
+  state: NertzGameState
 ): Partial<NertzGameState> => {
   popFromPile(playerState, action.source, action.sourceIndex)
 
@@ -259,7 +259,7 @@ const applyWorkPilePlay = (
  */
 const validateMergeWorkPiles = (
   action: Extract<GameAction, { type: "merge-work-piles" }>,
-  playerState: PlayerPileState,
+  playerState: PlayerPileState
 ): "illegal-move" | null => {
   if (action.sourcePileIndex === action.targetPileIndex) return "illegal-move"
 
@@ -294,7 +294,7 @@ const validateMergeWorkPiles = (
 const applyMergeWorkPiles = (
   action: Extract<GameAction, { type: "merge-work-piles" }>,
   playerState: PlayerPileState,
-  state: NertzGameState,
+  state: NertzGameState
 ): Partial<NertzGameState> => {
   const sourcePile = playerState.workPiles[action.sourcePileIndex]
   const targetPile = playerState.workPiles[action.targetPileIndex]
@@ -303,7 +303,8 @@ const applyMergeWorkPiles = (
   const group = sourcePile.splice(groupStart) // removes from source
 
   const bottomIdentity = parseCardId(action.cardId)
-  const targetTopIdentity = targetPile.length > 0 ? parseCardId(targetPile[targetPile.length - 1]) : null
+  const targetTopIdentity =
+    targetPile.length > 0 ? parseCardId(targetPile[targetPile.length - 1]) : null
 
   // Group's bottom card ranks higher than the target's top → group goes behind (unshift).
   // Otherwise group appends on top of the target (push).
@@ -353,14 +354,17 @@ export const processAction = (
   action: GameAction,
   playerId: string,
   state: NertzGameState,
-  resolvedPosition: { x: number; z: number },
+  resolvedPosition: { x: number; z: number }
 ): {
   result: ActionResult
   gameStateUpdate?: Partial<NertzGameState>
   isGameOver: boolean
 } => {
   if (action.type === "flip-stock" || action.type === "move-card") {
-    return { result: { ok: false, cardId: "", reason: "illegal-move" }, isGameOver: false }
+    return {
+      result: { ok: false, cardId: "", reason: "illegal-move" },
+      isGameOver: false,
+    }
   }
 
   const playerState = state.players.find((p) => p.playerId === playerId)
@@ -374,31 +378,55 @@ export const processAction = (
   if (action.type === "play-to-foundation") {
     const error = validateFoundationPlay(action, playerState, state)
     if (error) {
-      return { result: { ok: false, cardId: action.cardId, reason: error }, isGameOver: false }
+      return {
+        result: { ok: false, cardId: action.cardId, reason: error },
+        isGameOver: false,
+      }
     }
     const delta = applyFoundationPlay(action, playerState, state, resolvedPosition)
-    return { result: { ok: true, cardId: action.cardId }, gameStateUpdate: delta, isGameOver: false }
+    return {
+      result: { ok: true, cardId: action.cardId },
+      gameStateUpdate: delta,
+      isGameOver: false,
+    }
   }
 
   if (action.type === "play-to-work-pile") {
     const error = validateWorkPilePlay(action, playerState)
     if (error) {
-      return { result: { ok: false, cardId: action.cardId, reason: error }, isGameOver: false }
+      return {
+        result: { ok: false, cardId: action.cardId, reason: error },
+        isGameOver: false,
+      }
     }
     const delta = applyWorkPilePlay(action, playerState, state)
-    return { result: { ok: true, cardId: action.cardId }, gameStateUpdate: delta, isGameOver: false }
+    return {
+      result: { ok: true, cardId: action.cardId },
+      gameStateUpdate: delta,
+      isGameOver: false,
+    }
   }
 
   if (action.type === "merge-work-piles") {
     const error = validateMergeWorkPiles(action, playerState)
     if (error) {
-      return { result: { ok: false, cardId: action.cardId, reason: error }, isGameOver: false }
+      return {
+        result: { ok: false, cardId: action.cardId, reason: error },
+        isGameOver: false,
+      }
     }
     const delta = applyMergeWorkPiles(action, playerState, state)
-    return { result: { ok: true, cardId: action.cardId }, gameStateUpdate: delta, isGameOver: false }
+    return {
+      result: { ok: true, cardId: action.cardId },
+      gameStateUpdate: delta,
+      isGameOver: false,
+    }
   }
 
-  return { result: { ok: false, cardId: "unknown", reason: "illegal-move" }, isGameOver: false }
+  return {
+    result: { ok: false, cardId: "unknown", reason: "illegal-move" },
+    isGameOver: false,
+  }
 }
 
 /**
@@ -411,7 +439,7 @@ export const createOrMergeGameState = (
   numPlayers: number,
   positions: Record<string, { x: number; z: number }>,
   pileData: InitialPileData,
-  existing: NertzGameState | null,
+  existing: NertzGameState | null
 ): NertzGameState => {
   const playerState: PlayerPileState = {
     playerId,
@@ -461,7 +489,7 @@ export const createOrMergeGameState = (
  */
 export const getFoundationSlotPosition = (
   slotIndex: number,
-  numPlayers: number,
+  numPlayers: number
 ): { x: number; z: number } | null => {
   const slots = computeFoundationSlots(numPlayers)
   return slots[slotIndex] ?? null
@@ -477,7 +505,7 @@ export const getFoundationSlotPosition = (
  */
 export const processFlipStock = (
   playerId: string,
-  state: NertzGameState,
+  state: NertzGameState
 ): {
   result: ActionResult
   gameStateUpdate?: Partial<NertzGameState>
@@ -509,7 +537,10 @@ export const processFlipStock = (
     }
     return {
       result: { ok: true, cardId: "" },
-      gameStateUpdate: { players: state.players, cardPositions: cardPositionsDelta },
+      gameStateUpdate: {
+        players: state.players,
+        cardPositions: cardPositionsDelta,
+      },
     }
   }
 
@@ -527,7 +558,10 @@ export const processFlipStock = (
 
   return {
     result: { ok: true, cardId: topWasteCardId },
-    gameStateUpdate: { players: state.players, cardPositions: cardPositionsDelta },
+    gameStateUpdate: {
+      players: state.players,
+      cardPositions: cardPositionsDelta,
+    },
   }
 }
 
@@ -538,7 +572,7 @@ export const processFlipStock = (
 export const processStartGame = (
   playerId: string,
   hostPlayerId: string,
-  state: NertzGameState,
+  state: NertzGameState
 ): { ok: true; startedAt: string } | { ok: false; reason: string } => {
   if (playerId !== hostPlayerId) return { ok: false, reason: "Only the host can start the game" }
   if (state.phase !== "waiting") return { ok: false, reason: "Game is not in the waiting phase" }
@@ -554,7 +588,7 @@ export const processStartGame = (
  */
 export const processCallNertz = (
   playerId: string,
-  state: NertzGameState,
+  state: NertzGameState
 ): { ok: true } | { ok: false; reason: string } => {
   if (state.phase !== "playing") return { ok: false, reason: "Game is not in progress" }
   const playerState = state.players.find((p) => p.playerId === playerId)

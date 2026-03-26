@@ -1,10 +1,5 @@
 import { z } from "zod"
-import {
-  DEFAULT_GAME_TYPE,
-  MAX_PLAYERS,
-  MIN_PLAYERS,
-  ROOM_CODE_LENGTH,
-} from "../utils/constants"
+import { DEFAULT_GAME_TYPE, MAX_PLAYERS, MIN_PLAYERS, ROOM_CODE_LENGTH } from "../utils/constants"
 
 /** Runtime schema for `game.create` input payloads. */
 export const createGameInputSchema = z.object({

@@ -35,7 +35,7 @@ const setup = async (): Promise<void> => {
         AttributeName: "ttl",
         Enabled: true,
       },
-    }),
+    })
   )
 
   console.log(`Table "${TABLE}" created successfully.`)

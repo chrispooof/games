@@ -66,7 +66,7 @@ export const addPlayer = async (
   roomCode: string,
   playerId: string,
   socketId: string,
-  username?: string,
+  username?: string
 ): Promise<void> => {
   await PlayerEntity.build(PutItemCommand)
     .item({
@@ -96,7 +96,7 @@ export const removePlayer = async (roomCode: string, playerId: string): Promise<
 export const updateGameState = async (
   roomCode: string,
   gameType: string,
-  state: Record<string, unknown>,
+  state: Record<string, unknown>
 ): Promise<void> => {
   await GameStateEntity.build(PutItemCommand)
     .item({
@@ -140,7 +140,7 @@ export const getPlayers = async (roomCode: string): Promise<GamePlayer[]> => {
 export const updatePlayerSocket = async (
   roomCode: string,
   playerId: string,
-  socketId: string,
+  socketId: string
 ): Promise<void> => {
   await PlayerEntity.build(UpdateItemCommand)
     .item({ PK: `GAME#${roomCode}`, SK: `PLAYER#${playerId}`, socketId })

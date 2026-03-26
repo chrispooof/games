@@ -56,6 +56,7 @@ const NertzWelcome = ({ onHost, onJoin }: NertzWelcomeProps) => {
       setCreateError(null)
     },
     onSuccess: (data) => {
+      if (!data) return
       // Host also joins the room via socket so they receive real-time events
       socket.connect()
       socket.once("connect", () => {

@@ -42,6 +42,6 @@ npm run dev -w ui
 
 - [`infra/dynamodb.yml`](/Users/christian/Desktop/Code/games/infra/dynamodb.yml) deploys the DynamoDB table
 - [`infra/api-ec2.yml`](/Users/christian/Desktop/Code/games/infra/api-ec2.yml) deploys a small always-on EC2 host, SSM access, an artifact bucket for API releases, and a CloudFront HTTPS endpoint for browser traffic
-- [`.github/workflows/infra-deployment.yml`](/Users/christian/Desktop/Code/games/.github/workflows/infra-deployment.yml) deploys the DynamoDB and EC2 stacks for `dev` and `prod`
+- [`.github/workflows/infra-deployment.yml`](/Users/christian/Desktop/Code/games/.github/workflows/infra-deployment.yml) deploys the DynamoDB and EC2 stacks for `prod`
 - [`.github/workflows/api-deployment.yml`](/Users/christian/Desktop/Code/games/.github/workflows/api-deployment.yml) builds the API, uploads the release to S3, and deploys it to EC2 over SSM
 - [`.github/workflows/ui-deployment.yml`](/Users/christian/Desktop/Code/games/.github/workflows/ui-deployment.yml) now injects `VITE_API_URL` at build time so GitHub Pages can point at the correct API origin

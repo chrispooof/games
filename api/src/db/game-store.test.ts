@@ -120,7 +120,11 @@ describe("db/game-store", () => {
     gameSendMock.mockResolvedValueOnce({})
     const expectedTtl = Math.floor(Date.now() / 1000) + 86400
 
-    const out = await createGame({ roomCode: "ABC123", gameType: "nertz", playerCount: 4 })
+    const out = await createGame({
+      roomCode: "ABC123",
+      gameType: "nertz",
+      playerCount: 4,
+    })
 
     expect(gameBuildMock).toHaveBeenCalledTimes(1)
     expect(gameItemMock).toHaveBeenCalledWith({
@@ -149,7 +153,10 @@ describe("db/game-store", () => {
 
     const out = await getGame("ROOM42")
 
-    expect(gameKeyMock).toHaveBeenCalledWith({ PK: "GAME#ROOM42", SK: "METADATA" })
+    expect(gameKeyMock).toHaveBeenCalledWith({
+      PK: "GAME#ROOM42",
+      SK: "METADATA",
+    })
     expect(out).toBeNull()
   })
 
@@ -223,7 +230,10 @@ describe("db/game-store", () => {
 
     const out = await getGameState("ROOM42")
 
-    expect(gameStateKeyMock).toHaveBeenCalledWith({ PK: "GAME#ROOM42", SK: "STATE" })
+    expect(gameStateKeyMock).toHaveBeenCalledWith({
+      PK: "GAME#ROOM42",
+      SK: "STATE",
+    })
     expect(out).toBeNull()
   })
 
@@ -241,7 +251,13 @@ describe("db/game-store", () => {
   it("getPlayers queries player range and returns items", async () => {
     const { getPlayers } = await import("./game-store")
     tableSendMock.mockResolvedValueOnce({
-      Items: [{ playerId: "p1", socketId: "s1", joinedAt: "2026-01-01T00:00:00.000Z" }],
+      Items: [
+        {
+          playerId: "p1",
+          socketId: "s1",
+          joinedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
     })
 
     const out = await getPlayers("ROOM42")

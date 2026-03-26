@@ -104,7 +104,11 @@ describe("socket index dispatch contract", () => {
   })
 
   const registerAndJoin = async (opts: { gameType: string; module: SocketGameModule | null }) => {
-    getGameMock.mockResolvedValue({ roomCode: "ABC123", playerCount: 2, gameType: opts.gameType })
+    getGameMock.mockResolvedValue({
+      roomCode: "ABC123",
+      playerCount: 2,
+      gameType: opts.gameType,
+    })
     resolveGameModuleMock.mockReturnValue(opts.module)
 
     const { registerSocketHandlers } = await import("./index")
@@ -117,12 +121,17 @@ describe("socket index dispatch contract", () => {
   }
 
   it("rejects game-action for unknown gameType", async () => {
-    const { socket } = await registerAndJoin({ gameType: "unknown-game", module: null })
+    const { socket } = await registerAndJoin({
+      gameType: "unknown-game",
+      module: null,
+    })
     socket.emit.mockClear()
 
     await socket.trigger("game-action", { type: "flip-stock" })
 
-    expect(socket.emit).toHaveBeenCalledWith("error", { message: "Unsupported game type: unknown-game" })
+    expect(socket.emit).toHaveBeenCalledWith("error", {
+      message: "Unsupported game type: unknown-game",
+    })
     expect(updateGameStateMock).not.toHaveBeenCalled()
   })
 
@@ -135,7 +144,9 @@ describe("socket index dispatch contract", () => {
 
     await socket.trigger("join-room", { roomCode: "BAD", playerId: "" })
 
-    expect(socket.emit).toHaveBeenCalledWith("error", { message: "Invalid join-room payload" })
+    expect(socket.emit).toHaveBeenCalledWith("error", {
+      message: "Invalid join-room payload",
+    })
     expect(getGameMock).not.toHaveBeenCalled()
   })
 
@@ -217,7 +228,9 @@ describe("socket index dispatch contract", () => {
       gameType: "nertz",
       handleGameAction: () => ({ emits: [] }),
       handleSetState,
-      setStateSchema: z.object({ positions: z.record(z.string(), z.object({ x: z.number(), z: z.number() })) }),
+      setStateSchema: z.object({
+        positions: z.record(z.string(), z.object({ x: z.number(), z: z.number() })),
+      }),
     }
     const { socket } = await registerAndJoin({ gameType: "nertz", module })
     socket.emit.mockClear()

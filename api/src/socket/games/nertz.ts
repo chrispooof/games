@@ -76,7 +76,10 @@ const handleGameAction = (ctx: HandleGameActionContext): GameModuleResult => {
           ...buildNertzInfo(nertzState.players),
         },
       })
-      return { emits, nextState: nertzState as unknown as Record<string, unknown> }
+      return {
+        emits,
+        nextState: nertzState as unknown as Record<string, unknown>,
+      }
     }
     return { emits }
   }
@@ -105,10 +108,12 @@ const handleGameAction = (ctx: HandleGameActionContext): GameModuleResult => {
     action,
     ctx.playerId,
     nertzState,
-    resolvedPosition,
+    resolvedPosition
   )
 
-  const emits: GameModuleResult["emits"] = [{ target: "actor", event: "action-result", payload: result }]
+  const emits: GameModuleResult["emits"] = [
+    { target: "actor", event: "action-result", payload: result },
+  ]
 
   if (result.ok && gameStateUpdate) {
     emits.push({
@@ -120,7 +125,10 @@ const handleGameAction = (ctx: HandleGameActionContext): GameModuleResult => {
         ...buildNertzInfo(nertzState.players),
       },
     })
-    return { emits, nextState: nertzState as unknown as Record<string, unknown> }
+    return {
+      emits,
+      nextState: nertzState as unknown as Record<string, unknown>,
+    }
   }
 
   return { emits }
@@ -128,10 +136,13 @@ const handleGameAction = (ctx: HandleGameActionContext): GameModuleResult => {
 
 /** Handles initial pile-state upload after intro dealing completes. */
 const handleSetState = (ctx: HandleSetStateContext): GameModuleResult => {
-  const parsed = ctx.payload as { positions: Record<string, { x: number; z: number }>; pileState: InitialPileData }
+  const parsed = ctx.payload as {
+    positions: Record<string, { x: number; z: number }>
+    pileState: InitialPileData
+  }
 
   const sortedPlayers = [...ctx.players].sort(
-    (a, b) => new Date(a.joinedAt).getTime() - new Date(b.joinedAt).getTime(),
+    (a, b) => new Date(a.joinedAt).getTime() - new Date(b.joinedAt).getTime()
   )
   const playerIndex = sortedPlayers.findIndex((p) => p.playerId === ctx.playerId)
   const existing = asNertzState(ctx.gameState)
@@ -142,7 +153,7 @@ const handleSetState = (ctx: HandleSetStateContext): GameModuleResult => {
     ctx.numPlayers,
     parsed.positions,
     parsed.pileState,
-    existing,
+    existing
   )
 
   return {
@@ -166,14 +177,20 @@ const handleStartGame = (ctx: HandleStartGameContext): GameModuleResult => {
   if (!nertzState) return { emits: [] }
 
   const sortedPlayers = [...ctx.players].sort(
-    (a, b) => new Date(a.joinedAt).getTime() - new Date(b.joinedAt).getTime(),
+    (a, b) => new Date(a.joinedAt).getTime() - new Date(b.joinedAt).getTime()
   )
   const hostPlayerId = sortedPlayers[0]?.playerId ?? ""
   const result = processStartGame(ctx.playerId, hostPlayerId, nertzState)
   if (!result.ok) return { emits: [] }
 
   return {
-    emits: [{ target: "room", event: "game-started", payload: { startedAt: result.startedAt } }],
+    emits: [
+      {
+        target: "room",
+        event: "game-started",
+        payload: { startedAt: result.startedAt },
+      },
+    ],
     nextState: nertzState as unknown as Record<string, unknown>,
   }
 }
@@ -186,15 +203,26 @@ const handleCallNertz = (ctx: HandleCallNertzContext): GameModuleResult => {
   const result = processCallNertz(ctx.playerId, nertzState)
   if (!result.ok) return { emits: [] }
 
-  const scores: Record<string, { foundationCards: number; nertzRemaining: number; total: number }> = {}
+  const scores: Record<string, { foundationCards: number; nertzRemaining: number; total: number }> =
+    {}
   for (const player of nertzState.players) {
     const foundationCards = nertzState.foundationContributions?.[player.playerId] ?? 0
     const nertzRemaining = player.nertzPile.length
-    scores[player.playerId] = { foundationCards, nertzRemaining, total: foundationCards - nertzRemaining }
+    scores[player.playerId] = {
+      foundationCards,
+      nertzRemaining,
+      total: foundationCards - nertzRemaining,
+    }
   }
 
   return {
-    emits: [{ target: "room", event: "game-over", payload: { winnerId: nertzState.winnerId, scores } }],
+    emits: [
+      {
+        target: "room",
+        event: "game-over",
+        payload: { winnerId: nertzState.winnerId, scores },
+      },
+    ],
     nextState: nertzState as unknown as Record<string, unknown>,
   }
 }

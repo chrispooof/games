@@ -70,7 +70,7 @@ test("createOrMergeGameState merges player data into existing state", () => {
     2,
     { p1_Card_A_clubs: { x: 3, z: 4 } },
     makePileData(),
-    existing,
+    existing
   )
 
   expect(merged.players).toHaveLength(2)

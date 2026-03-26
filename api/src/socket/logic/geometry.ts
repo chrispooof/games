@@ -24,7 +24,7 @@ export const computeSeat = (index: number, total: number, seatRadius: number): S
 export const computeDealPiles = (
   seat: SeatTransform,
   seatRadius: number,
-  pileOffset: number,
+  pileOffset: number
 ): Array<{ x: number; z: number }> => {
   const r = seatRadius - pileOffset
   const cx = Math.sin(seat.angle) * r
@@ -52,7 +52,7 @@ export const computeDealPiles = (
 export const computeFoundationSlots = (
   numPlayers: number,
   slotGap = 0.85,
-  rowGap = 1.15,
+  rowGap = 1.15
 ): FoundationSlotTransform[] => {
   const total = numPlayers * 4
 

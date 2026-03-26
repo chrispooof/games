@@ -20,7 +20,10 @@ describe("router/game", () => {
     createGameMock.mockRejectedValueOnce(new Error("aws dynamodb access denied"))
 
     const { appRouter } = await import("./index.js")
-    const caller = appRouter.createCaller({ req: {} as never, res: {} as never })
+    const caller = appRouter.createCaller({
+      req: {} as never,
+      res: {} as never,
+    })
 
     await expect(caller.game.create({ playerCount: 2, gameType: "nertz" })).rejects.toMatchObject({
       code: "INTERNAL_SERVER_ERROR",
@@ -32,7 +35,10 @@ describe("router/game", () => {
     getGameMock.mockResolvedValueOnce(null)
 
     const { appRouter } = await import("./index.js")
-    const caller = appRouter.createCaller({ req: {} as never, res: {} as never })
+    const caller = appRouter.createCaller({
+      req: {} as never,
+      res: {} as never,
+    })
 
     await expect(caller.game.get({ roomCode: "ABC123" })).rejects.toBeInstanceOf(TRPCError)
   })

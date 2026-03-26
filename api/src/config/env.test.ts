@@ -22,7 +22,7 @@ describe("config/env", () => {
         AWS_REGION: "eu-west-1",
         DYNAMODB_TABLE: "CardGames-prod",
         DYNAMODB_ENDPOINT: "http://localhost:8000",
-      }),
+      })
     ).toEqual({
       nodeEnv: "production",
       port: 8080,
