@@ -31,7 +31,6 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <Links />
       </head>
       <body>
-        <script type="module" src="/app/games/index.ts" />
         {children}
         <ScrollRestoration />
         <Scripts />
