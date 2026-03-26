@@ -66,6 +66,7 @@ export default function NertzRoute() {
   const [showRules, setShowRules] = useState(false)
   const [scores, setScores] = useState<Record<string, PlayerScore>>({})
   const [winnerId, setWinnerId] = useState<string | null>(null)
+  const [copiedRoomCode, setCopiedRoomCode] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
   const gameRef = useRef<NertzGame | null>(null)
 
@@ -381,7 +382,49 @@ export default function NertzRoute() {
       {/* Top-right: room code + timer */}
       <div className="absolute top-3 right-3 z-10 bg-black/60 backdrop-blur-sm rounded-lg px-4 py-2 border border-white/10 select-none text-right">
         <p className="text-white/50 text-xs uppercase tracking-widest font-medium">Room Code</p>
-        <p className="text-white text-2xl font-black tracking-widest">{scene.roomCode}</p>
+        <div className="flex items-center justify-end gap-2">
+          <p className="text-white text-2xl font-black tracking-widest">{scene.roomCode}</p>
+          <button
+            onClick={() => {
+              navigator.clipboard.writeText(scene.roomCode)
+              setCopiedRoomCode(true)
+              setTimeout(() => setCopiedRoomCode(false), 2000)
+            }}
+            className={`transition-colors cursor-pointer ${copiedRoomCode ? "text-green-400" : "text-white/40 hover:text-white/80"}`}
+            title={copiedRoomCode ? "Copied!" : "Copy room code"}
+          >
+            {copiedRoomCode ? (
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <polyline points="20 6 9 17 4 12" />
+              </svg>
+            ) : (
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+              </svg>
+            )}
+          </button>
+        </div>
         {gamePhase !== "waiting" && (
           <p className="text-white/60 text-sm font-mono mt-0.5">{elapsed}</p>
         )}
