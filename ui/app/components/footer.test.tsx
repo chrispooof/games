@@ -10,9 +10,9 @@ describe("Footer", () => {
     expect(container.querySelector("footer")).not.toBeNull()
   })
 
-  it("displays the copyright text", () => {
+  it("displays the MIT license text", () => {
     render(<Footer />)
-    expect(screen.getByText(/all rights reserved/i)).not.toBeNull()
+    expect(screen.getByText(/mit/i)).not.toBeNull()
   })
 
   it("includes the current year", () => {
