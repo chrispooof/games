@@ -1,7 +1,10 @@
 {
   "name": "games-monorepo",
   "private": true,
-  "workspaces": ["ui", "api"],
+  "workspaces": [
+    "ui",
+    "api"
+  ],
   "scripts": {
     "prepare": "command -v husky >/dev/null 2>&1 && husky || true",
     "docker:up": "docker compose up -d",
@@ -15,6 +18,8 @@
     "format": "nx run-many -t format"
   },
   "devDependencies": {
+    "@commitlint/cli": "^20.5.0",
+    "@commitlint/config-conventional": "^20.5.0",
     "concurrently": "^9.0.0",
     "husky": "^9.1.7",
     "nx": "latest",
