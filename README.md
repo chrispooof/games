@@ -1,6 +1,10 @@
 # Games
 
-This is a monorepo for card game applications. Currently WIP.
+This is a monorepo for web-based games. Currently WIP.
+
+## Current Games
+
+- [Nertz](https://chrispooof.github.com/games/nertz) - Simultaneous competitive solitaire!
 
 ## Structure
 
